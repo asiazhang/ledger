@@ -4,12 +4,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 
-// 被测对象是仓库工具脚本 scripts/check-eastmoney-residue.ts（东财行情面端点与
-// 常量零残留守门，issue #1572 / ADR-0130 守门判据①——源码扫描，删除任一遗漏即红）。
-// 脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun') 与门槛
-// 调用同款拉起，测的就是门槛路径。
-// 按测试决策只测外部可观察结果——进程退出码与输出，通过位置参数把扫描目标指向
-// 临时夹具目录（形状同构仓库根：scripts/ 守门本体在场 + 登记例外的 FX 腿文件）。
 const script = gateScript("check-eastmoney-residue.ts");
 const run = (args: string[] = []) => runGateScript(script, args);
 
@@ -18,9 +12,6 @@ afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-/** 登记例外的 FX 腿夹具已随 #1551 退役（REGISTERED_EXCEPTIONS 清空）：
- *  原东财 push2his 主机池现在出现在 http.rs 即未登记残留，直接红（收紧后的判据）。
- */
 const RETIRED_FX_HOST_POOL = [
   "// 测试夹具：已退役的东财 FX 日 K 主机池（#1551 换 ECB）",
   "pub const FX_KLINE_HOSTS: &[&str] = &[",
@@ -28,14 +19,12 @@ const RETIRED_FX_HOST_POOL = [
   "];",
 ].join("\n");
 
-/** 豁免自证与例外登记的默认文件（值为 null 表示刻意省略——负向样本用） */
 const DEFAULT_FILES: Record<string, string> = {
   "scripts/check-eastmoney-residue.ts": "// 守门本体（豁免自证对象）",
   "scripts/check-eastmoney-residue.test.ts": "// 包装测试（豁免自证对象）",
   "src/lib.ts": "export const ok = 1;",
 };
 
-/** 建夹具目录（形状同构仓库根）；值为 null 表示刻意省略该默认文件 */
 function makeFixture(files: Record<string, string | null> = {}): string {
   const dir = mkdtempSync(join(tmpdir(), "check-eastmoney-residue-"));
   tempDirs.push(dir);
@@ -53,7 +42,6 @@ describe("check-eastmoney-residue（东财行情面端点零残留守门，issue
     const r = run();
     expect(r.status).toBe(0);
     expect(r.output).toContain("东财行情面零残留守门通过");
-    // 零例外稳态（#1551 退役 FX 腿后删除登记条目，同 check-infra-dml 自 #1108 起）
     expect(r.output).toContain("已登记例外 0 条");
   });
 

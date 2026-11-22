@@ -9,23 +9,14 @@ import { makeOccurrence, makeSubscriptionPlan } from "../../factories";
 import type { VueWrapper } from "@vue/test-utils";
 import { mockDetails, makeDetail, mountView, setMockPlans, setup } from "./common";
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0];
 
 beforeEach(setup);
-
-/**
- * 订阅页签移动档（issue #848 / ADR-0088 决策 11 票⑧，词汇表「窗口分级」）：
- * 列结构三分（备注/金额/操作），信息并入副行不丢失；生命周期操作一击可达
- * （可见按钮 + ≥48px 触控目标）；状态过滤与操作描述符行为不回归。桌面档
- * 十列一字不动（回归红线）。
- */
 
 function tableOf(wrapper: VueWrapper) {
   return wrapper.findComponent(NDataTable);
 }
 
-/** 订阅夹具：active 计划 + 商户 + 一笔 pending 期次（下期扣款）。 */
 function wireActivePlan() {
   const plan = makeSubscriptionPlan({ id: "a1", note: "视频会员", amount_cents: 1500 }, "mer-1");
   setMockPlans([plan]);
@@ -55,15 +46,14 @@ describe("SubscriptionsPane 移动档（issue #848 / ADR-0088 决策 11 票⑧�
     const wrapper = await mountView();
     const row = wrapper.find(".n-data-table-tbody .n-data-table-tr");
     const text = row.text();
-    expect(text).toContain("视频会员"); // 备注（标题行）
-    expect(text).toContain("进行中"); // 状态
-    expect(text).toContain("每月"); // 周期
-    expect(text).toContain("2026-01-01"); // 开始日
-    expect(text).toContain("视频平台"); // 商户
-    expect(text).toContain("订阅服务"); // 分类
-    expect(text).toContain("招商银行"); // 账户
-    expect(text).toContain(formatAmount(1500, cny)); // 金额
-    // 下期扣款锚点与桌面同 testid：日期与金额并存
+    expect(text).toContain("视频会员");
+    expect(text).toContain("进行中");
+    expect(text).toContain("每月");
+    expect(text).toContain("2026-01-01");
+    expect(text).toContain("视频平台");
+    expect(text).toContain("订阅服务");
+    expect(text).toContain("招商银行");
+    expect(text).toContain(formatAmount(1500, cny));
     const next = wrapper.find('[data-testid="next-charge-a1"]');
     expect(next.exists()).toBe(true);
     expect(next.text()).toContain("2026-03-01");
@@ -98,7 +88,6 @@ describe("SubscriptionsPane 移动档（issue #848 / ADR-0088 决策 11 票⑧�
     setMockPlans([paused]);
     mockDetails.set("p1", makeDetail(paused, []));
     const wrapper = await mountView();
-    // paused 行默认不在「进行中」过滤内，切过滤后恢复按钮可见
     await wrapper.find('[data-testid="filter-paused"]').trigger("click");
     await flushPromises();
     const resume = wrapper.find('[data-testid="op-resume-p1"]');
@@ -141,7 +130,6 @@ describe("SubscriptionsPane 移动档（issue #848 / ADR-0088 决策 11 票⑧�
     const edit = wrapper.find('[data-testid="op-edit-a1"]');
     expect(detail.exists()).toBe(true);
     expect(edit.exists()).toBe(true);
-    // 纵排堆叠中编辑位于详情之后（DOM 序）
     expect(
       detail.element.compareDocumentPosition(edit.element) &
         (globalThis.Node.DOCUMENT_POSITION_FOLLOWING as number),

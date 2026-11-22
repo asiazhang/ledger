@@ -1,18 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { installmentSchedule } from "../installment";
 
-/**
- * 分期每期金额预览纯函数（issue #204）。
- * 口径与后端一致（src-tauri/src/scheduled_transactions/engine.rs expand_occurrences）：
- * floor 均分、尾差进最后一期——不造第二套金额口径。
- */
 describe("installmentSchedule 分期每期金额预览", () => {
   it("整除：每期相等，末期无尾差", () => {
     expect(installmentSchedule(1200, 12)).toEqual({ perPeriodCents: 100, lastPeriodCents: 100 });
   });
 
   it("不整除：floor 均分，尾差进最后一期", () => {
-    // 100 分分 3 期 → 33/33/34
     expect(installmentSchedule(100, 3)).toEqual({ perPeriodCents: 33, lastPeriodCents: 34 });
   });
 

@@ -1,18 +1,4 @@
 #!/usr/bin/env bun
-// 样式块守门（issue #888 / ADR-0093）：`src` 下 .vue 文件禁止携带 <style> 块
-// （scoped / 非 scoped / module 一律算），存量携带者以下方白名单冻结——白名单外
-// 新增 <style> 块即拦截。新样式一律走组件旁路 vanilla-extract 样式文件
-// （*.css.ts，与组件同目录共置），存量随触碰渐进迁移（boy-scout），迁移后把
-// 文件从白名单移除。白名单是登记表而非备忘录，双向核验：白名单外的 <style>
-// 块即红（正向），白名单条目指向的文件在扫描面内不可达同样即红——文件删除/
-// 改名/搬迁后未同步清单时陈目不静默存留（#1360，清单漂移 fail loud，同
-// TOAST_BASELINE 不可达检查与结构守门规则⑥⑦形制）。
-// 不设注释豁免通道：逃逸 = 显式回 ADR 讨论后改脚本（与 check-dialog-forms.ts
-// 同一纪律）。样式类型安全由 vue-tsc / Vite 构建期把守，本脚本只守样式块纪律。
-// TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
-// 门槛检查；调用方式 `bun scripts/check-style-blocks.ts`。
-// 默认扫描本仓库 src；可传位置参数指向其他目录：bun scripts/check-style-blocks.ts [scan-root]
-// 真实仓绿基线用例：scripts/check-style-blocks.test.ts（issue #1473）。
 
 import { readFileSync } from "node:fs";
 import { relative } from "node:path";
@@ -20,16 +6,9 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { walkTextFiles } from "./gate-primitives.ts";
 import { parse } from "vue/compiler-sfc";
 
-/** 扫描面扩展名闭集（walkTextFiles 消费参数）：.vue（样式块）+ .ts（css.ts 旁路文件） */
 const VUE_EXTENSIONS: ReadonlySet<string> = new Set([".vue"]);
 const TS_EXTENSIONS: ReadonlySet<string> = new Set([".ts"]);
 
-/** 存量 <style> 块白名单（issue #888 交付时点快照，按路径排序；#1159 起源码按域
- *  归位，域文件路径同步为域目录坐标 src/<域>/）：
- *  试点组件 AiPromptView.vue 已迁出，不在此列；其余随触碰渐进迁移，
- *  迁移一个删一个，不允许只增不减；条目指向的文件必须可达，不可达即红（#1360）。
- *  路径以仓库根为基准、正斜杠分隔。导出供包装测试夹具派生（单一事实源，
- *  TOAST_BASELINE 同款纪律）。 */
 export const STYLE_BLOCK_WHITELIST: readonly string[] = [
   "src/App.vue",
   "src/accounts/AccountLink.vue",
@@ -61,41 +40,23 @@ export const STYLE_BLOCK_WHITELIST: readonly string[] = [
   "src/views/SettingsView.vue",
 ];
 
-/** 白名单归一化：统一为仓库根相对、正斜杠分隔的路径。 */
 function normalizePath(file: string): string {
   return relative(process.cwd(), file).split("\\").join("/");
 }
 
-/** 递归收集扫描根下全部 .vue 文件（按名排序保证输出稳定）：遍历机制归守门家族
- *  共享单点 walkTextFiles（#1680 收口），扩展名闭集经 options 注入。 */
 export function collectVueFiles(root: string): string[] {
   return walkTextFiles(root, "", { extensions: VUE_EXTENSIONS }).map((f) => f.abs);
 }
 
-/** 递归收集扫描根下全部 vanilla-extract 旁路样式文件（*.css.ts）。 */
 export function collectCssFiles(root: string): string[] {
   return walkTextFiles(root, "", { extensions: TS_EXTENSIONS })
     .filter((f) => f.abs.endsWith(".css.ts"))
     .map((f) => f.abs);
 }
 
-/**
- * CJS 形态字面串探测（与 mlly `detectSyntax` 的 CJS_RE 同一正则，逐字同源）：
- * vanilla-extract 编译管线对每个 *.css.ts 以该正则判 ESM/CJS（@vanilla-extract/
- * integration addFileScope → detectSyntax，**不剥注释**）——命中即按 CommonJS
- * 处理，注入 `require("@vanilla-extract/css/fileScope")` 版文件作用域包装；
- * ESM 求值下 require 不存在，作用域从未设置，首个样式调用即抛
- * 「Styles were unable to be assigned to a file」（vite build 失败，#2189 实际
- * 翻车根因：注释里的 `global.css` 命中 `global\.w`）。
- *
- * 判定面 = 原始文本（注释与字符串都算）：与真实管线行为逐字对齐，不设白名单
- * ——真被误判 CJS 的文件在本门禁内即红，逃逸 = 改写措辞（如 `global.css` →
- * `全局样式基座`）或显式回 ADR 讨论。
- */
 export const CJS_LOOKALIKE_RE =
   /(?:[\s;]|^)(?:module\.exports\b|exports\.\w|require\s*\(|global\.\w)/g;
 
-/** 检查单个 .css.ts：返回 CJS 形态字面串命中行（1 基行号 + 命中文本）。 */
 export function checkCssFile(file: string): Array<{ line: number; text: string }> {
   const source = readFileSync(file, "utf-8");
   const hits: Array<{ line: number; text: string }> = [];
@@ -109,8 +70,6 @@ export function checkCssFile(file: string): Array<{ line: number; text: string }
   return hits;
 }
 
-/** 检查单个 .vue 文件：返回是否携带 <style> 块与解析失败信息（如有）。
- *  经 vue/compiler-sfc 解析（注释里的 "<style>" 字样不误报）。 */
 export function checkVueFile(file: string): { hasStyleBlock: boolean; failure?: string } {
   const source = readFileSync(file, "utf-8");
   const { descriptor, errors } = parse(source, { filename: file });
@@ -135,12 +94,10 @@ function main(): void {
       violations.push(normalizePath(file));
     }
   }
-  // *.css.ts 旁路文件的 CJS 形态字面串扫描（#2189 翻车根因机械化）
   const cssFiles = collectCssFiles(scanRoot);
   const cssHits = cssFiles.flatMap((file) =>
     checkCssFile(file).map((hit) => ({ file: normalizePath(file) || file, ...hit })),
   );
-  // 反向存在性断言（#1360）：白名单条目必须在扫描面内可达，陈目即红
   const scannedRels = new Set(files.map((file) => normalizePath(file)));
   const unreachable = STYLE_BLOCK_WHITELIST.filter((rel) => !scannedRels.has(rel));
   if (
@@ -179,9 +136,6 @@ function main(): void {
   process.exit(1);
 }
 
-// 仅直接运行时执行 main；导出的检查函数与白名单清单供包装测试/后续工具复用。
-// 包装测试随 #1360 补齐（scripts/check-style-blocks.test.ts，spawnSync 进程级
-// 断言退出码与输出，同 check-async-guards.test.ts 形制），挂 check.sh 随 CI 执行。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }

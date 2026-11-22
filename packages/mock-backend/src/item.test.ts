@@ -3,28 +3,10 @@ import { installMockBackend } from "./index";
 import { invoke } from "./tauri/core";
 import { listen } from "./tauri/event";
 
-/**
- * 物品域替身行为测试（issue #1974 / spec #1964 / ADR-0143）：接缝 = 应用所见
- * 的 tauri 命令面（`installMockBackend` + `invoke`），断言布线与行为一体——
- * 删除任一登记行即未命中报错、本文件变红（接线负向判据，ADR-0087 断言强度）。
- *
- * 日均成本三元组期望值为独立人算字面量（口径见 item.ts 头注：分母 = 购买日 →
- * 目标日的日历天数**含起止两端**；分子 = 总成本 − 残值下限 0；每天成本 =
- * 分子 ÷ 天数）。替身「今日」锚定 2026-01-15（MOCK_TODAY，确定性纪律）。
- *
- * 夹具两行的人算过程：
- * - 人体工学椅（mock-item-chair，已处置）：购买 2025-09-24 → 处置 2026-01-01，
- *   9 月余 6 天 + 10 月 31 + 11 月 30 + 12 月 31 + 1 月 1 = 99 天差，含两端
- *   = 100 天；分子 = 200_000 − 100_000 = 100_000；每天 = 100_000 ÷ 100 = 1000。
- * - 智能手机（mock-item-phone，在用）：购买 2026-01-06 → 替身今日 2026-01-15
- *   = 9 天差，含两端 = 10 天；无残值分子 = 599_900；每天 = 59_990。
- */
-
 beforeEach(() => {
-  installMockBackend(); // 重装即重播种：每用例从夹具种子起步
+  installMockBackend();
 });
 
-/** 订阅 ledger:changed 并返回触发计数（断言失效信号必发，ADR-0143 决策 3）。 */
 function captureLedgerChanged(): () => number {
   let count = 0;
   void listen("ledger:changed", () => {
@@ -33,7 +15,6 @@ function captureLedgerChanged(): () => number {
   return () => count;
 }
 
-/** 物品行的观察面：仅取断言关心的字段。 */
 interface ItemRow {
   id: string;
   name: string;
@@ -62,9 +43,9 @@ describe("物品列表读：夹具投影与日均成本三元组", () => {
       purchase_date: "2025-09-24",
       disposal_date: "2026-01-01",
       residual_value_cents: 100_000,
-      used_days: 100, // 2025-09-24 → 2026-01-01 含两端（独立人算）
-      numerator_cents: 100_000, // 200_000 − 100_000
-      per_day_cents: 1000.0, // 100_000 ÷ 100
+      used_days: 100,
+      numerator_cents: 100_000,
+      per_day_cents: 1000.0,
     });
   });
 
@@ -74,9 +55,9 @@ describe("物品列表读：夹具投影与日均成本三元组", () => {
       name: "智能手机",
       status: "in_use",
       purchase_date: "2026-01-06",
-      used_days: 10, // 2026-01-06 → 2026-01-15 含两端
+      used_days: 10,
       numerator_cents: 599_900,
-      per_day_cents: 59_990.0, // 599_900 ÷ 10
+      per_day_cents: 59_990.0,
     });
   });
 
@@ -104,7 +85,6 @@ describe("calculate_item_cost：自选参考日重算", () => {
       id: "mock-item-phone",
       referenceDate: "2026-01-25",
     });
-    // 2026-01-06 → 2026-01-25 = 19 天差，含两端 20 天；599_900 ÷ 20 = 29_995
     expect(cost).toEqual({ used_days: 20, numerator_cents: 599_900, per_day_cents: 29_995.0 });
   });
 
@@ -135,7 +115,6 @@ describe("物品写闭环：建档 → 列表出现 → 处置 → 三元组重�
       name: "电吹风",
       status: "in_use",
       purchase_date: "2025-12-01",
-      // 2025-12-01 → 2026-01-15 = 45 天差，含两端 46 天；25_000 ÷ 46 ≈ 543.48
       used_days: 46,
       numerator_cents: 25_000,
     });
@@ -143,9 +122,6 @@ describe("物品写闭环：建档 → 列表出现 → 处置 → 三元组重�
   });
 
   it("未来购买日的在用物品列表不翻车：目标日取购买日当天起算 1 天（#1977 过页发现的错位）", async () => {
-    // 场景重放：mock 模式下新记交易日期 = 浏览器真实今天，可晚于替身时钟锚
-    // 2026-01-15；修复前 list_items 对在用物品传 MOCK_TODAY 整表抛错，
-    // store 重拉静默失败、新物品永不出现。
     const id = await invoke<string>("create_item", {
       input: {
         name: "未来买入",
@@ -160,7 +136,6 @@ describe("物品写闭环：建档 → 列表出现 → 处置 → 三元组重�
     expect(row).toMatchObject({
       status: "in_use",
       purchase_date: "2026-10-23",
-      // 购买当天起算：同日 = 1 天，成本全额
       used_days: 1,
       numerator_cents: 10_000,
     });
@@ -202,7 +177,6 @@ describe("物品写闭环：建档 → 列表出现 → 处置 → 三元组重�
     expect(row).toMatchObject({
       name: "智能手机 Pro",
       purchase_date: "2026-01-01",
-      // 2026-01-01 → 2026-01-15 = 14 天差，含两端 15 天；500_000 ÷ 15
       used_days: 15,
       numerator_cents: 500_000,
     });
@@ -222,11 +196,10 @@ describe("物品写闭环：建档 → 列表出现 → 处置 → 三元组重�
       status: "disposed",
       disposal_date: "2026-01-10",
       residual_value_cents: 99_900,
-      // 2026-01-06 → 2026-01-10 = 4 天差，含两端 5 天；分子 599_900 − 99_900 = 500_000
       used_days: 5,
       numerator_cents: 500_000,
     });
-    expect(row.per_day_cents).toBe(100_000.0); // 500_000 ÷ 5
+    expect(row.per_day_cents).toBe(100_000.0);
   });
 
   it("残值 ≥ 总成本：分子下限 0，每天成本 0（不输出负成本）", async () => {
@@ -252,7 +225,6 @@ describe("物品写闭环：建档 → 列表出现 → 处置 → 三元组重�
 
     const row = await itemOf("mock-item-phone");
     expect(row).toMatchObject({ disposal_date: "2026-01-12", residual_value_cents: 199_900 });
-    // 2026-01-06 → 2026-01-12 含两端 7 天；599_900 − 199_900 = 400_000 ÷ 7
     expect(row.used_days).toBe(7);
     expect(row.per_day_cents).toBeCloseTo(400_000 / 7, 9);
   });
@@ -262,13 +234,13 @@ describe("物品写闭环：建档 → 列表出现 → 处置 → 三元组重�
     await expect(
       invoke("dispose_item", {
         id: "mock-item-phone",
-        input: { disposal_date: "2026-01-05" }, // 早于购买 2026-01-06
+        input: { disposal_date: "2026-01-05" },
       }),
     ).rejects.toThrow(/早于购买日期/);
     await expect(
       invoke("dispose_item", {
         id: "mock-item-phone",
-        input: { disposal_date: "2026-01-16" }, // 晚于替身今日 2026-01-15
+        input: { disposal_date: "2026-01-16" },
       }),
     ).rejects.toThrow(/不能晚于今天/);
     expect(changed()).toBe(0);

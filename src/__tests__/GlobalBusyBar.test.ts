@@ -5,12 +5,6 @@ import { setFakeMedia } from "@ledger/test-support/media-mock";
 import GlobalBusyBar from "@/components/GlobalBusyBar.vue";
 import { trackBusy, resetGlobalBusy } from "@ledger/api/global-busy";
 
-/**
- * 全局忙碌条移动档位置适配（issue #842）：分支断言只落在档位类名上
- * （移动档顶缘随安全区下移；具体像素归 CSS，不测像素值，spec #838 测试决策）。
- * 忙碌态走真实路径：trackBusy + 300ms 阈值（fake timers 推进）。
- */
-
 beforeEach(() => {
   vi.useFakeTimers();
   resetGlobalBusy();

@@ -1,6 +1,3 @@
-//! 订阅编辑——仅非金额字段（issue #162，ADR-0023 决策三）：备注 / 分类 / 账户 /
-//! 商户编辑与金额字段拒绝，计划生成交易的备注 / 分类 / 账户落库断言。
-
 use cucumber::{then, when};
 use rusqlite::params;
 
@@ -9,11 +6,6 @@ use ledger_scheduled::{UpdateSubscriptionInput, update_subscription};
 use crate::common::assert_last_error_contains;
 use crate::world::LedgerWorld;
 
-// ---------------------------------------------------------------------------
-// 订阅编辑——仅非金额字段（issue #162，ADR-0023 决策三）
-// ---------------------------------------------------------------------------
-
-/// 按名称解析支出分类 id（与 budget_steps 的夹具同一张表）。
 fn category_id_by_name(conn: &rusqlite::Connection, name: &str) -> Option<String> {
     conn.query_row(
         "SELECT id FROM categories WHERE name=?1 AND kind='expense' AND is_deleted=0",
@@ -23,13 +15,11 @@ fn category_id_by_name(conn: &rusqlite::Connection, name: &str) -> Option<String
     .ok()
 }
 
-/// 编辑最近订阅计划的备注/分类（走 update_subscription 命令体，账户不变）。
 #[when(expr = "编辑该订阅计划 备注 {string} 分类 {string}")]
 fn edit_subscription_plan(world: &mut LedgerWorld, note: String, category: String) {
     edit_subscription_plan_inner(world, note, Some(category), None);
 }
 
-/// 编辑最近订阅计划的商户（issue #190：改商户只影响未来期次；其余字段取当前值）。
 #[when(expr = "编辑该订阅计划 商户 {string}")]
 fn edit_subscription_plan_merchant(world: &mut LedgerWorld, merchant: String) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
@@ -58,7 +48,6 @@ fn edit_subscription_plan_merchant(world: &mut LedgerWorld, merchant: String) {
     .expect("编辑订阅商户失败");
 }
 
-/// 编辑最近订阅计划的备注/分类/扣款账户（改户只影响未来期次，issue #162）。
 #[when(expr = "编辑该订阅计划 备注 {string} 分类 {string} 账户 {string}")]
 fn edit_subscription_plan_with_account(
     world: &mut LedgerWorld,
@@ -83,7 +72,6 @@ fn edit_subscription_plan_inner(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    // 商户为全量替换语义：合法编辑补齐当前商户（含软删商户保持历史引用）。
     let current_merchant: Option<String> = world_conn!(world)
         .query_row(
             "SELECT merchant_id FROM subscription_plans WHERE scheduled_transaction_id=?1",
@@ -109,7 +97,6 @@ fn edit_subscription_plan_inner(
                 category_id,
                 note: Some(note),
                 merchant_id: current_merchant,
-                // 合法编辑请求不携带金额字段
                 amount_cents: false,
                 total_amount_cents: false,
             },
@@ -118,7 +105,6 @@ fn edit_subscription_plan_inner(
     .expect("编辑订阅计划失败");
 }
 
-/// 携带金额字段发出编辑请求：应被后端显式拒绝（ADR-0023 决策三）。
 #[when(expr = "携带金额 {int} 编辑该订阅计划")]
 fn edit_subscription_plan_with_amount(world: &mut LedgerWorld, _amount: i64) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
@@ -146,7 +132,6 @@ fn edit_subscription_plan_with_amount(world: &mut LedgerWorld, _amount: i64) {
                 category_id,
                 note,
                 merchant_id,
-                // 金额哨兵置位：请求携带 amount_cents，应被领域层显式拒绝
                 amount_cents: true,
                 total_amount_cents: false,
             },
@@ -175,7 +160,6 @@ fn assert_plan_note(world: &mut LedgerWorld, expected: String) {
     assert_eq!(note, expected, "计划备注不符");
 }
 
-/// 最近计划生成的第 n 笔交易（1 起，按交易日期升序）的落库备注/分类。
 #[then(expr = "第 {int} 笔计划交易备注应为 {string}")]
 fn assert_plan_txn_note(world: &mut LedgerWorld, nth: usize, expected: String) {
     let txn = plan_generated_txn(world, nth);

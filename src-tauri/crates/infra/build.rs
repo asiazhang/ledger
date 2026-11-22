@@ -1,20 +1,3 @@
-//! 构建期迁移链投影生成（issue #2199）：迁移单一来源 = `src-tauri/migrations/`
-//! 目录本身，此前「目录 → `migrate.rs` 注册链 → 测试常量 `LATEST_SCHEMA_VERSION`」
-//! 三处抄写同一事实，漏抄任意一处只在测试事后暴露（#2197 现场）。
-//!
-//! 扫描迁移目录中匹配 `V<数字>__<名称>.sql` 的文件，按版本号升序生成
-//! `$(OUT_DIR)/migration_chain.rs`：
-//! - `MIGRATION_CHAIN: &[&str]`——按序的迁移 SQL 清单（`include_str!` 绝对路径），
-//!   `migrate.rs` 消费为 `Migrations`，注册零手工清单；
-//! - `MIGRATION_COUNT: usize`——链长投影，测试侧 `LATEST_SCHEMA_VERSION` 的唯一
-//!   事实源（`user_version` 由 rusqlite_migration 按链长写，二者恒等）。
-//!
-//! 扫描维护边界（fail loud，宁编译失败不静默漏注册）：目录内任何 `*.sql` 文件
-//! 必须匹配 `V<数字>__<名称>.sql`（防文件名笔误静默漏嵌）；版本号重复即 panic；
-//! 序列号有洞合法（V005 已移除不回填，见 ADR-0027 / migrate.rs 注记）。
-//
-// 豁免（ADR-0060）：构建脚本 fail-loud 守门刻意用 panic!/expect 表达
-// 「扫描器失灵即拒绝构建」；构建期代码不进入生产运行时，不受六件套门禁约束。
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -29,8 +12,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn main() {
-    // 只监听迁移目录：生成物仅由 migrations/** 决定（build.rs 自身变更 cargo 必然重跑）。
-    // 目录级监听含增删文件（cargo 对目录递归扫描变更）。
     println!("cargo:rerun-if-changed=../../migrations");
 
     let manifest_dir =
@@ -42,7 +23,6 @@ fn main() {
     );
 }
 
-/// 扫描迁移目录，返回按版本号升序的 SQL 文件路径。
 fn scan_migrations_dir(dir: &Path) -> Vec<(u32, PathBuf)> {
     let mut chain: Vec<(u32, PathBuf)> = Vec::new();
     let mut seen: std::collections::BTreeMap<u32, PathBuf> = Default::default();
@@ -90,7 +70,6 @@ fn scan_migrations_dir(dir: &Path) -> Vec<(u32, PathBuf)> {
     chain
 }
 
-/// 生成迁移链清单（按序 include_str 绝对路径）与链长投影常量。
 fn write_chain(chain: &[(u32, PathBuf)], out_dir: &Path) {
     let mut out = String::new();
     writeln!(

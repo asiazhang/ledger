@@ -1,19 +1,3 @@
-//! 订阅花费——实际花费口径（issue #160，ADR-0023 决策二）。
-//!
-//! 实际花费 = 某日历月/年内，由订阅计划期次生成的交易流水的忠实合计：
-//! - 金额读期次关联流水（`scheduled_transaction_occurrences.transaction_id`）的
-//!   `amount_native_cents`——落库时已经 Writer 接缝折算为本位币，读取期不二次折算；
-//! - 合计口径消费 Amount 接缝的支出净额度量（`expense_net`）：SUM 表达式由
-//!   kind→系数矩阵生成（`transaction::amount::expense_net_expr`）——「期次流水恒为
-//!   支出」是引擎当前行为而非聚合的口径假设，期次若关联非支出流水（income/transfer
-//!   等）系数为 0 不混入合计，退款按净额冲减，不静默漂移（issue #395）；
-//! - 按流水 `date`（= 期次 `scheduled_date`）的日历月/年聚合，**不摊销**——
-//!   年付订阅在扣款月全额计入，其余月份为 0；
-//! - 不过滤计划状态：取消/暂停计划的历史实际花费如实保留；
-//! - 只读聚合（先例：`dashboard_overview`），不新增任何写路径。
-//!
-//! 推算成本口径（折算月/年成本）见 [`monthly_coefficient`]（issue #161）。
-
 use std::collections::HashMap;
 
 use chrono::{Datelike, Months, NaiveDate};
@@ -26,53 +10,35 @@ use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_transaction::amount;
 
-/// 逐订阅行：计划基础信息 + 该订阅本月/本年实际花费（本位币）。
 #[derive(Debug, Clone, Serialize)]
 pub struct SubscriptionSpendRow {
     pub plan_id: String,
     pub note: Option<String>,
-    /// 商户名（左联 merchants 现名，issue #190 / ADR-0028）：改名即时生效；
-    /// 商户软删后历史计划照常显示原名（merchants 行仍保留）。
     pub merchant_name: Option<String>,
-    /// 计划状态（active/paused/cancelled/completed），历史花费不受其影响。
     pub status: String,
-    /// 每期金额（计划币种，原始口径）。
     pub amount_cents: i64,
     pub currency_code: String,
-    /// 该订阅本月实际花费（本位币，分）。
     pub this_month_native_cents: i64,
-    /// 该订阅本年实际花费（本位币，分）。
     pub this_year_native_cents: i64,
 }
 
-/// 单个日历月的订阅实际花费（本位币，分）。
 #[derive(Debug, Clone, Serialize)]
 pub struct SubscriptionMonthSpend {
-    /// 日历月，`YYYY-MM`。
     pub month: String,
     pub native_cents: i64,
 }
 
-/// `subscription_spend_overview` 命令返回的订阅花费总览（本位币口径，单位：分）。
 #[derive(Debug, Clone, Serialize)]
 pub struct SubscriptionSpendOverview {
-    /// 折算基准币种（全局默认币种）
     pub native_currency: String,
-    /// 本月实际花费合计（本位币，分）
     pub this_month_native_cents: i64,
-    /// 本年实际花费合计（本位币，分）
     pub this_year_native_cents: i64,
-    /// 过去 12 个日历月逐月实际花费（含当月，旧→新，无扣款月补 0）
     pub months: Vec<SubscriptionMonthSpend>,
-    /// 逐订阅行（含已取消/暂停计划，其历史实际花费如实保留）
     pub rows: Vec<SubscriptionSpendRow>,
-    /// 折算月成本合计（本位币，分）：只统计 active 计划，系数见 `monthly_coefficient`
     pub projected_month_native_cents: i64,
-    /// 折算年成本合计（本位币，分）= 折算月成本 × 12；纯展示，不落库、不进流水与预算
     pub projected_year_native_cents: i64,
 }
 
-/// 聚合中间行：计划 × 日历月 → 本位币花费合计。
 struct PlanMonthSpend {
     plan_id: String,
     month: String,
@@ -89,7 +55,6 @@ impl FromRow for PlanMonthSpend {
     }
 }
 
-/// 计划基础信息（扩展表 merchant 左联，缺行为空）。
 struct PlanBase {
     id: String,
     note: Option<String>,
@@ -112,13 +77,6 @@ impl FromRow for PlanBase {
     }
 }
 
-/// 折算月成本系数（issue #161，ADR-0023 决策二）：后端单点收口。
-/// 月付 ×1、年付 ÷12、周付 ×52÷12、日付 ×30；`recurrence_interval > 1` 时
-/// 按间隔均摊（每 N 期一扣 → 系数 ÷ N，如「每 3 月 ¥300」折算月成本 ¥100）。
-/// 表约束已保证 `recurrence_interval > 0`（建表 CHECK），直接除法即可。
-///
-/// 公开（issue #1753）：储蓄目标域按周期折算月存复用同一系数（订阅花费先例，
-/// 比照同款口径）——折算系数表后端只此一份，消费方不另抄第二份漂移。
 pub fn monthly_coefficient(recurrence_type: RecurrenceType, recurrence_interval: i64) -> f64 {
     let per_cycle = match recurrence_type {
         RecurrenceType::Monthly => 1.0,
@@ -129,7 +87,6 @@ pub fn monthly_coefficient(recurrence_type: RecurrenceType, recurrence_interval:
     per_cycle / recurrence_interval as f64
 }
 
-/// 推算中间行：active 订阅计划的计费参数。
 struct PlanBilling {
     amount_cents: i64,
     currency_code: String,
@@ -148,12 +105,6 @@ impl FromRow for PlanBilling {
     }
 }
 
-/// 推算成本（issue #161，ADR-0023 决策二）：按当前 active 订阅计划参数推算的
-/// 持续烧钱速度，只算 active、不看执行情况；金额在计划币种上折算本位币
-/// （缺汇率报错上抛）。纯展示口径：不落库、不进流水与预算。
-///
-/// 舍入口径：逐计划先折算本位币再乘系数、四舍五入到分，最后求和；
-/// 折算年成本 = 折算月成本合计 × 12（不在年这一级再舍入）。
 fn query_projected_cost(conn: &Connection) -> Result<(i64, i64)> {
     let plans: Vec<PlanBilling> = query_all(
         conn,
@@ -164,7 +115,6 @@ fn query_projected_cost(conn: &Connection) -> Result<(i64, i64)> {
     )?;
     let mut projected_month = 0i64;
     for p in plans {
-        // 未知周期类型为脏数据，报错上抛，不静默跳过
         let recurrence_type: RecurrenceType = p.recurrence_type.parse()?;
         let native_cents =
             amount::convert_to_native_current(conn, p.amount_cents, &p.currency_code)?;
@@ -174,14 +124,6 @@ fn query_projected_cost(conn: &Connection) -> Result<(i64, i64)> {
     Ok((projected_month, projected_month * 12))
 }
 
-/// conn 级聚合：订阅实际花费总览（只读）。`today` 由命令层注入（本地今日），
-/// 单测与 e2e 可传固定日期获得确定性口径。
-///
-/// **读快照一致性（issue #1702）**：逐月花费聚合、订阅行清单、推算成本
-///（计划金额 × 汇率）与基准币种是多语句读闭包，整体收进同一读事务（嵌套
-/// 感知）——「行内花费与顶层汇总同源」的既有依赖要求同一快照：期次落账落在
-/// 语句间即合计 ≠ Σ 行；计划取消落在语句间即行已 cancelled 而推算成本仍按
-/// active 计（或反向）。
 pub fn query_subscription_spend(
     conn: &Connection,
     today: NaiveDate,
@@ -189,15 +131,10 @@ pub fn query_subscription_spend(
     ensure_transaction(conn, || query_subscription_spend_within_tx(conn, today))
 }
 
-/// 订阅花费总览本体（无事务语义，由 [`query_subscription_spend`] 的
-/// [`ensure_transaction`] 包裹）。
 fn query_subscription_spend_within_tx(
     conn: &Connection,
     today: NaiveDate,
 ) -> Result<SubscriptionSpendOverview> {
-    // 期次关联流水的逐计划逐月本位币合计：只认 completed 期次真实生成的流水，
-    // 计划状态不参与过滤（取消/暂停不影响历史实际花费）。合计表达式消费 Amount
-    // 接缝的支出净额矩阵片段而非裸求和（口径注释见模块头，issue #395）。
     let spends: Vec<PlanMonthSpend> = query_all(
         conn,
         &format!(
@@ -221,8 +158,6 @@ fn query_subscription_spend_within_tx(
             .insert(s.month, s.native_cents);
     }
 
-    // 过去 12 个日历月（含当月，旧→新）：chrono Months 做月份裁剪（月末钳制），
-    // 与 advance_date 的周期推进语义一致。
     let first = today - Months::new(11);
     let mut months = Vec::with_capacity(12);
     let mut cursor = first;
@@ -253,8 +188,6 @@ fn query_subscription_spend_within_tx(
         }
     }
 
-    // 逐订阅行：全部订阅计划（不过滤状态），行内花费只汇总 12 个月窗口内的数据。
-    // 商户名左联 merchants 现名：改名即时生效（引用指向 id）；商户软删后历史计划照常显示。
     let bases: Vec<PlanBase> = query_all(
         conn,
         "SELECT st.id, st.note, m.name, st.status, st.amount_cents, st.currency_code \
@@ -269,8 +202,6 @@ fn query_subscription_spend_within_tx(
     let rows = bases
         .into_iter()
         .map(|b| {
-            // 行内花费与顶层汇总同源：都从同一个 12 个月窗口推导（窗口必含本年至今），
-            // 避免行级另走全史路径导致口径分叉。
             let plan_map = by_plan.get(&b.id);
             let month_cents =
                 |month: &str| -> i64 { plan_map.and_then(|m| m.get(month)).copied().unwrap_or(0) };

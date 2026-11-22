@@ -3,13 +3,6 @@ import { merchantTableRows } from "../merchant-chart";
 import { paletteColor } from "../category-chart";
 import type { MerchantShare } from "@ledger/types";
 
-// 商户消费排行表格行构建纯函数（issue #618 表格化）：排序与 topN 截断已收口后端
-// `merchant_shares`，前端按返回序渲染、零口径逻辑。行色与支出分类构成同源——
-// 分类色板按名次序取色（多颜色）；内嵌条比例分母 = 显示区最大正金额（TopN 下即
-// 第一名），负净额不画条（比例归 0）但金额与占比照实；占比分母 = 后端载荷全量
-// 合计（与 topN 截断无关，沿用既有 tooltip 同一取整口径）；笔数从 MerchantShare
-// 透传；merchant_id 透传为下钻跳转载荷用（issue #589）。
-
 describe("merchantTableRows 表格行构建（issue #618）", () => {
   const rows: MerchantShare[] = [
     { merchant_id: "m-1", merchant_name: "超市", amount_cents: 5000, transaction_count: 3 },
@@ -32,7 +25,6 @@ describe("merchantTableRows 表格行构建（issue #618）", () => {
   it("行色与分类构成同源：色板按名次序取色（多颜色，第 1 名 = 色板首位深蓝）", () => {
     const table = merchantTableRows(rows, 15000);
     expect(table.map((r) => r.color)).toEqual([paletteColor(0), paletteColor(1), paletteColor(2)]);
-    // 多颜色：相邻名次颜色互不相同
     expect(table[0].color).not.toBe(table[1].color);
     expect(table[1].color).not.toBe(table[2].color);
   });
@@ -55,7 +47,6 @@ describe("merchantTableRows 表格行构建（issue #618）", () => {
   });
 
   it("占比% 分母 = 载荷全量合计（与 topN 截断无关），取整口径与既有 tooltip 同源", () => {
-    // 全量 15000 刻意 ≠ 展示行合计 7500：咖啡 2500/15000 = 17%（误用行合计会得 33%）
     const table = merchantTableRows(rows, 15000);
     expect(table.map((r) => r.sharePct)).toEqual([33, 17, 0]);
   });
@@ -67,7 +58,7 @@ describe("merchantTableRows 表格行构建（issue #618）", () => {
     );
     expect(table[0].amount_cents).toBe(-200);
     expect(table[0].barPct).toBe(0);
-    expect(table[0].sharePct).toBe(-1); // round(-200/15000*100) = round(-1.33) = -1
+    expect(table[0].sharePct).toBe(-1);
   });
 
   it("负净额行不影响其他行的条长分母：分母 = 最大正金额，非绝对值最大", () => {

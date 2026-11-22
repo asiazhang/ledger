@@ -8,8 +8,6 @@ import { registerToastSink } from "@ledger/loadable";
 import { resetToastSink } from "./factories";
 import type { EncryptionStatus } from "@ledger/types";
 
-// 重启钩子单点 mock：断言各转换流的编排触发与「toast 先落地再重启」时序；
-// restart_app 的 IPC 时序（800ms 延迟、命令成功后重载）归既有 restart.test.ts。
 vi.mock("@/backup/restart", () => ({ restartAppShortly: vi.fn() }));
 
 import { useEncryptionTransitions } from "@/backup/useEncryptionTransitions";
@@ -20,13 +18,9 @@ import { useAppStore } from "@/stores/app";
 const plaintextStatus: EncryptionStatus = { locked: false, file_encrypted: false };
 const encryptedStatus: EncryptionStatus = { locked: false, file_encrypted: true };
 
-/** 合法主口令（恰 8 位边界值，issue #650 最小长度 ≥8）。 */
 const PASS_OK = "主口令至少八个字";
-/** 过短主口令（3 位，触发字段错误红显）。 */
 const PASS_SHORT = "短口令";
 
-/** 承载 composable 生命周期的宿主组件（useBackup.test.ts 先例）：工厂体内
- *  useMessage() 须有 setup 上下文，setup 中捕获返回值供断言。 */
 function mountHost() {
   let tr!: ReturnType<typeof useEncryptionTransitions>;
   const Host = defineComponent({
@@ -39,7 +33,6 @@ function mountHost() {
   return { tr };
 }
 
-/** 已挂载且状态就绪的宿主（默认明文库）。 */
 async function mountReadyHost(
   seam: InvokeSeamOptions = {
     defaults: {
@@ -54,7 +47,6 @@ async function mountReadyHost(
   return tr;
 }
 
-/** 开启流推进到「确认弹窗已打开」：合法口令 + requestEnable。 */
 async function openEnableConfirm(tr: ReturnType<typeof useEncryptionTransitions>) {
   tr.passphrase.value = PASS_OK;
   tr.confirmPassphrase.value = PASS_OK;
@@ -62,7 +54,6 @@ async function openEnableConfirm(tr: ReturnType<typeof useEncryptionTransitions>
   expect(tr.enableConfirmShow.value).toBe(true);
 }
 
-/** 修改流推进到「确认弹窗已打开」：changeReady 三字段 + requestChange。 */
 async function openChangeConfirm(tr: ReturnType<typeof useEncryptionTransitions>) {
   tr.changeOld.value = "旧口令八个字";
   tr.changeNew.value = PASS_OK;
@@ -71,13 +62,10 @@ async function openChangeConfirm(tr: ReturnType<typeof useEncryptionTransitions>
   expect(tr.changeConfirmShow.value).toBe(true);
 }
 
-/** 永不落定的应答（重入守卫用：让在途窗口可观察）。 */
 function pending(): Promise<never> {
   return new Promise(() => {});
 }
 
-/** toast → 重启时序的观察器：记录两钩子的实际触发次序（Vitest mock 无
- *  invocationCallOrder，以实现注入记录次序，断言「toast 先落地再重启」）。 */
 function trackToastRestartOrder() {
   const order: string[] = [];
   messageApi.success.mockImplementation(() => order.push("toast"));
@@ -86,10 +74,7 @@ function trackToastRestartOrder() {
 }
 
 beforeEach(() => {
-  // Loadable 默认错误 toast 经模块级单点 sink；测试把它接到消息替身，供断言读取
-  //（book-sidebar-entry.test.ts 先例）。
   registerToastSink(messageApi);
-  // 本机记住的平台能力是模块级单例态，不在全局清理四件套内，就地复位。
   const { rememberSupport } = useEncryptionGate();
   rememberSupport.value = null;
 });
@@ -148,7 +133,6 @@ describe("useEncryptionTransitions 开启流", () => {
     tr.requestEnable();
     expect(tr.enableConfirmShow.value).toBe(true);
 
-    // 两次不一致（确认非空且不同）不开弹窗
     tr.enableConfirmShow.value = false;
     tr.confirmPassphrase.value = PASS_SHORT;
     tr.requestEnable();
@@ -181,7 +165,6 @@ describe("useEncryptionTransitions 开启流", () => {
     expect(messageApi.success).toHaveBeenCalledWith("加密已开启，应用即将重启");
     expect(tr.passphrase.value).toBe("");
     expect(tr.confirmPassphrase.value).toBe("");
-    // toast 先落地再触发重启（Restart 同型时序，ADR-0080）
     expect(order).toEqual(["toast", "restart"]);
     expect(restartAppShortly).toHaveBeenCalledTimes(1);
   });
@@ -203,7 +186,6 @@ describe("useEncryptionTransitions 开启流", () => {
     expect(restartAppShortly).not.toHaveBeenCalled();
     expect(tr.submitting.value).toBe(false);
 
-    // 字段保留可改后重提：修正应答后重新走确认流
     wireInvokeSeam({ overrides: { enable_encryption: () => Promise.resolve() } });
     tr.requestEnable();
     await tr.confirmEnable();
@@ -452,7 +434,6 @@ describe("useEncryptionTransitions 关闭加密流", () => {
 });
 
 describe("useEncryptionTransitions 自动解锁", () => {
-  /** 已加密 + 支持自动解锁的宿主。 */
   async function mountEncryptedHost(overrides: Record<string, InvokeSeamOverride> = {}) {
     return mountReadyHost({
       defaults: {
@@ -522,7 +503,6 @@ describe("useEncryptionTransitions 自动解锁", () => {
     expect(messageApi.error).not.toHaveBeenCalled();
     expect(tr.autoUnlockSubmitting.value).toBe(false);
 
-    // 就地重试：换正确口令后启用成功
     tr.autoUnlockPass.value = "正确口令八个字";
     await tr.confirmAutoUnlock();
     await flushPromises();
@@ -556,8 +536,6 @@ describe("useEncryptionTransitions 自动解锁", () => {
     expect(messageApi.success).toHaveBeenCalledWith("已关闭自动解锁，下次启动恢复手动输入主口令");
   });
 });
-
-// —— invoke 调用读取：次数摘要（args 读取走 test-support 的 lastInvokeArgs）——
 
 function callsOf(cmd: string): number {
   return mockInvoke.mock.calls.filter(([c]) => c === cmd).length;

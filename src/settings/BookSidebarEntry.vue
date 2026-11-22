@@ -17,25 +17,13 @@ import { useRouter } from "vue-router";
 import { useFeatureToggleStore } from "@/settings/feature-toggles";
 import { computed } from "vue";
 
-// 侧栏左下角账本入口与弹层（issue #834 / ADR-0089）：入口（当前账本名按钮 +
-// 折叠态浮标）是 useBookSwitcher 深模块的薄适配器——清单渲染、切换确认、
-// 新建/改名/移除编排全部内化在模块中，本组件只做渲染接线。
-//
-// 弹层纪律：清单弹层经 AppPopover（非模态面板，点外部关闭 + 开关上报弹层
-// 注册表）；移除走行级气泡确认 AppPopconfirm（既有轻量形态，ADR-0078 范围
-// 边界）；切换确认与命名弹窗见 useBookSwitcher / AppModal。
-
 const props = defineProps<{
-  /** 侧栏折叠态：折叠时入口切换为固定左下角的浮标图标形态（随时可达）。 */
   collapsed: boolean;
 }>();
 
 const router = useRouter();
 const featureToggles = useFeatureToggleStore();
 
-// 跨账本投资汇总入口（issue #1196 / ADR-0114 决策 6）：非账本条目、仅导航——
-// 不动活动指针、不触发原位重引导；注册表损坏回退（清单不可信）时不可用；
-// 投资功能关闭时入口消失（纯投资口径页随投资开关，ADR-0116 决策 4）。
 const summaryAvailable = computed(
   () => mutable.value && !loadFailed.value && !featureToggles.isFeatureClosed("investments"),
 );
@@ -69,7 +57,6 @@ const {
   removeBook,
 } = useBookSwitcher();
 
-// 侧栏折叠/展开切换时收起弹层：锚点按钮随形态互换，避免弹层悬空
 watch(
   () => props.collapsed,
   () => closePanel(),
@@ -262,12 +249,10 @@ watch(
 </template>
 
 <style scoped>
-/* 入口根：展开态按钮与侧栏边缘留白（浮标与弹层均不受布局影响） */
 .book-entry-root {
   padding: 4px 8px 10px;
 }
 
-/* 展开态入口：占满侧栏底部一行，图标 + 当前账本名 + 上箭头（弹层向上展开） */
 .book-entry :deep(.n-button__content) {
   width: 100%;
 }
@@ -298,7 +283,6 @@ watch(
   opacity: 0.55;
 }
 
-/* 折叠态浮标：固定视口左下角（侧栏折叠宽度归零，入口以图标形态保留） */
 .book-entry-float {
   position: fixed;
   left: 10px;
@@ -306,7 +290,6 @@ watch(
   z-index: 100;
 }
 
-/* 弹层面板（class 落在 teleport 到 body 的浮层上，scoped 命中需 :deep 透传） */
 .book-panel-popover :deep(.n-popover) {
   padding: 0;
 }
@@ -394,7 +377,6 @@ watch(
   opacity: 0.3;
 }
 
-/* 汇总入口：独立的按钮形态（不取账本行类名，账本清单行计数与选择器不受干扰） */
 .book-summary-entry {
   display: flex;
   align-items: center;

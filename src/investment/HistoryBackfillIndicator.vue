@@ -3,12 +3,6 @@ import { t } from "@ledger/i18n";
 import { root, text } from "./history-backfill-indicator.css.ts";
 import { useHistoryBackfill } from "./useHistoryBackfill";
 
-// 价格历史后台补全的静默计数（issue #1375 / ADR-0122）：投资页内唯一的
-// 用户可见面——「历史数据补全中 137/228」这类只读计数。刻意不做的事：
-// 不占全局忙碌条、不改变任何页面可用性、不可点（pointer-events 关闭）、
-// 无进度条形态（那是手动同步的专属形态）、终态（done ≥ total）静默收起
-//（收起逻辑归 useHistoryBackfill 接缝，本组件纯展示）。
-
 const { progress } = useHistoryBackfill();
 </script>
 

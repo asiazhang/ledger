@@ -1,8 +1,3 @@
-//! 股票创建增强的领域落库接缝（issue #694 / ADR-0081 决策 2 / ADR-0103）：行情源
-//! 往返路由判定（真实代码触网 / 北交所与矛盾 market 拒绝 / 非代码形态走通用路径）、
-//! 命中落库（权威名称 + 解析市场 + 现价，经行情接入落库半边）、降级落库（市场保留、
-//! 既有行不覆盖）。全部离线驱动，先例：[`super::fund_add`]。
-
 use crate::{
     InstrumentType, Market, Quote, StockCreateRoute, StockRoute, adopt_stock_quote,
     create_stock_degraded, prices::TENCENT_PRICE_SOURCE, route_stock_creation,
@@ -10,7 +5,6 @@ use crate::{
 
 use tauri_app_lib::test_support::open;
 
-/// 构造一份典型股票行情（统一报价载荷，ADR-0103；价格万分之一元刻度）。
 fn quote(code: &str, name: &str, market: Market, price: Option<i64>) -> Quote {
     Quote {
         code: code.to_string(),
@@ -26,7 +20,6 @@ fn quote(code: &str, name: &str, market: Market, price: Option<i64>) -> Quote {
     }
 }
 
-/// 查标的行（symbol + stock 类型定位）：(name, market, currency, source)。
 fn stock_row(
     conn: &rusqlite::Connection,
     symbol: &str,
@@ -40,7 +33,6 @@ fn stock_row(
     .unwrap_or_else(|_| panic!("stock 标的行应存在: {symbol}"))
 }
 
-/// 查现价行：(price_cents, currency_code, priced_at 非空, nav_date, source)。
 type StockPriceRow = (i64, String, bool, Option<String>, Option<String>);
 
 fn price_row(conn: &rusqlite::Connection, instrument_id: &str) -> Option<StockPriceRow> {
@@ -61,10 +53,6 @@ fn price_row(conn: &rusqlite::Connection, instrument_id: &str) -> Option<StockPr
     .ok()
 }
 
-// ---------------------------------------------------------------------------
-// 行情往返路由判定：真实代码触网、边界显式拒绝、兜底不触网
-// ---------------------------------------------------------------------------
-
 #[test]
 fn routes_resolvable_real_code_to_enhance_with_resolved_market() {
     let route = route_stock_creation(Some("sh"), "600519");
@@ -75,7 +63,6 @@ fn routes_resolvable_real_code_to_enhance_with_resolved_market() {
     assert_eq!(plan.candidate.code, "600519");
     assert_eq!(plan.degrade_market, Market::Sh, "降级保留解析市场");
 
-    // 缺省 market：按形态推断（深市 + 港股补零归一）后同样路由到增强。
     for (market, route, code) in [
         (Market::Sz, StockRoute::Sz, "000001"),
         (Market::Hk, StockRoute::Hk, "00700"),
@@ -91,8 +78,6 @@ fn routes_resolvable_real_code_to_enhance_with_resolved_market() {
 
 #[test]
 fn routes_us_ticker_to_enhance_with_single_query() {
-    // 美股 ticker 缺省 market：聚合查询单只（精确交易所由行情源自报，
-    // ADR-0130 决策 2），降级市场 unknown——无网络时无法预知交易所归属（issue #696）。
     let route = route_stock_creation(None, "aapl");
     let StockCreateRoute::Enhance(plan) = route else {
         panic!("美股 ticker 应路由到增强: {route:?}");
@@ -105,7 +90,6 @@ fn routes_us_ticker_to_enhance_with_single_query() {
     assert_eq!(plan.candidate.code, "AAPL", "代码大写归一");
     assert_eq!(plan.degrade_market, Market::Unknown, "缺省降级无法预知市场");
 
-    // 显式美股市场：同解为聚合查询；降级保留显式市场（行情通道仍可达，issue #694）。
     for market in [Market::Nasdaq, Market::Nyse, Market::Amex] {
         let StockCreateRoute::Enhance(plan) = route_stock_creation(Some(market.as_str()), "AAPL")
         else {
@@ -139,15 +123,12 @@ fn rejects_real_code_with_conflicting_market() {
     };
     assert!(e.is_code("stock.market-conflict"));
 
-    // 数字形态 + 显式美股市场：形态矛盾（美股候选只服务字母 ticker），
-    // 显式拒绝（错挂市场 = 永无行情的错行）。
     let route = route_stock_creation(Some("nasdaq"), "600519");
     let StockCreateRoute::Reject(e) = route else {
         panic!("数字代码 + 美股 market 应拒绝");
     };
     assert!(e.is_code("stock.market-conflict"));
 
-    // 字母 ticker + 显式沪深港：同样矛盾。
     let route = route_stock_creation(Some("sh"), "AAPL");
     let StockCreateRoute::Reject(e) = route else {
         panic!("字母 ticker + 沪市 market 应拒绝");
@@ -157,7 +138,6 @@ fn rejects_real_code_with_conflicting_market() {
 
 #[test]
 fn routes_non_code_shapes_to_generic_path() {
-    // 名称充代码兜底：无 market 与有 market（用户知道大致市场）都不触网。
     for market in [None, Some("sh")] {
         assert!(
             matches!(
@@ -168,10 +148,6 @@ fn routes_non_code_shapes_to_generic_path() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// 行情命中落库：权威名称 + 解析市场 + 现价
-// ---------------------------------------------------------------------------
 
 #[test]
 fn persists_quote_as_stock_row_with_market_and_price() {
@@ -240,10 +216,6 @@ fn hong_kong_quote_derives_hkd_currency() {
     let _ = outcome;
 }
 
-// ---------------------------------------------------------------------------
-// 降级落库：市场保留（价格通道可达的前提）、既有行不覆盖
-// ---------------------------------------------------------------------------
-
 #[test]
 fn degraded_creation_preserves_resolved_market() {
     let conn = open();
@@ -291,14 +263,12 @@ fn degraded_creation_without_ai_name_creates_nameless_row() {
 #[test]
 fn degraded_replay_reuses_row_without_overwriting_authoritative_name() {
     let conn = open();
-    // 第一笔：行情可达 → 权威名称回填 + 落价。
     let first = adopt_stock_quote(
         &conn,
         InstrumentType::Stock,
         &quote("600519", "贵州茅台", Market::Sh, Some(150000)),
     )
     .expect("命中落库应成功");
-    // 第二笔：行情不可达 + AI 提交另一名称 → 降级复用同一 id，权威名称与现价不动。
     let replay = create_stock_degraded(
         &conn,
         InstrumentType::Stock,
@@ -327,8 +297,6 @@ fn degraded_replay_reuses_row_without_overwriting_authoritative_name() {
 #[test]
 fn persists_quote_with_submitted_etf_kind_preserves_type() {
     let conn = open();
-    // 场内基金段代码 + 调用方按类型提示提交 etf：增强照常生效，类型以提交为准
-    //（行情类型提示只在查询端点投影，不在此改写）。
     let outcome = adopt_stock_quote(
         &conn,
         InstrumentType::Etf,

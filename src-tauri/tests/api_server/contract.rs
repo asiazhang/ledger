@@ -1,19 +1,9 @@
-//! 紧凑契约方言端点锁（issue #839）：`GET /api/v1/contract` 返回为 AI 设计的
-//! 紧凑 JSON 方言（`ledger-contract-1`）——与标准 OpenAPI（`/api/v1/openapi.json`）
-//! 同一 `ApiDoc` 源的第二机械投影。本文件只锁外部可见行为（HTTP 产物形状与体积
-//! 预算），不为投影函数建立内部调用级断言。
-//!
-//! 既有 OpenAPI 文档结构锁（`documentation.rs`）的契约保证在此逐条移植到方言
-//! 形状：端点覆盖清单、kind 小写枚举、dedup wrapper、幂等键不可编辑、投资四
-//! 字段描述锁；并新增方言头、类型表达式全覆盖、出处剥离与体积预算锁。
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
 use crate::common::{body_to_bytes, get_json, setup_app};
 
-/// 拉取方言文档（每测试独立装配，断言互不依赖执行顺序）。
 async fn fetch_contract() -> serde_json::Value {
     let (app, _) = setup_app();
     let (status, doc) = get_json(&app, "/api/v1/contract").await;
@@ -21,8 +11,6 @@ async fn fetch_contract() -> serde_json::Value {
     doc
 }
 
-/// 方言头：版本标记、base 地址与图例在位（user story 2/14/15）——AI 无需
-/// OpenAPI info 块即可连接并解析方言。
 #[tokio::test]
 async fn contract_dialect_header() {
     let doc = fetch_contract().await;
@@ -45,8 +33,6 @@ async fn contract_dialect_header() {
     assert!(doc["schemas"].as_object().expect("schemas 对象在位").len() >= 26);
 }
 
-/// 端点覆盖清单（移植自 `test_openapi_doc_covers_all_endpoints`）：方言端点
-/// 键为 `m` + `p`（路径省略 /api/v1 前缀，base 已含）。
 #[tokio::test]
 async fn contract_covers_all_endpoints() {
     let doc = fetch_contract().await;
@@ -84,8 +70,6 @@ async fn contract_covers_all_endpoints() {
     }
 }
 
-/// 端点请求体与状态码→响应类型映射：读回自纠所需的状态码与错误 schema
-/// 语义在位（user story 5）；无 JSON 体的响应以 `-` 占位。
 #[tokio::test]
 async fn contract_request_body_and_responses() {
     let doc = fetch_contract().await;
@@ -98,21 +82,16 @@ async fn contract_request_body_and_responses() {
             .unwrap_or_else(|| panic!("方言应包含端点 {m} {p}"))
     };
 
-    // 批量导入：body wrapper + 200 数组响应 + 400 错误（移植 dedup wrapper 锁的一半）。
     let batch = find("POST", "/transactions/batch");
     assert_eq!(batch["body"], "TransactionBatchInput");
     assert_eq!(batch["res"]["200"], "CreateTransactionResult[]");
     assert_eq!(batch["res"]["400"], "ErrorResponse");
 
-    // 读回：200 响应类型在位（移植列表 schema 锁的一半）。
     assert_eq!(
         find("GET", "/transactions")["res"]["200"],
         "TransactionListResult"
     );
 
-    // 删除：204（无 JSON 体）与 404 状态码保留（移植自
-    // test_openapi_doc_covers_delete_transaction_endpoint）；部分卖出的 400
-    // 已随级联删除退役（issue #940 / ADR-0097：删除改级联 + 回补，不再拒绝）。
     let delete = find("DELETE", "/transactions/{id}");
     assert_eq!(delete["res"]["204"], "-", "无响应体以 - 占位");
     assert_eq!(delete["res"]["404"], "ErrorResponse");
@@ -121,13 +100,10 @@ async fn contract_request_body_and_responses() {
         "删除不再声明部分卖出 400（级联删除退场，issue #940）"
     );
 
-    // 账户编辑：请求体 schema 名在位。
     let put = find("PUT", "/accounts/{id}");
     assert_eq!(put["body"], "AccountUpdateInput");
     assert_eq!(put["res"]["200"], "Account");
 
-    // 导入知识：text/plain 端点无 JSON 响应 schema（分级自足后两个知识端点，
-    // issue #1123）。
     assert_eq!(find("GET", "/import/knowledge")["res"]["200"], "-");
     assert_eq!(
         find("GET", "/import/knowledge/investment")["res"]["200"],
@@ -135,9 +111,6 @@ async fn contract_request_body_and_responses() {
     );
 }
 
-/// kind 闭集枚举移植到方言形状（移植自
-/// `test_openapi_transaction_kind_is_lowercase_enum`）：`Transaction.kind` 引用
-/// schema 名，`TransactionKind` 为 9 个小写值的 `|` 闭集。
 #[tokio::test]
 async fn contract_kind_enum_is_closed_lowercase_set() {
     let doc = fetch_contract().await;
@@ -159,9 +132,6 @@ async fn contract_kind_enum_is_closed_lowercase_set() {
     );
 }
 
-/// batch wrapper 与 duplicate 字段移植到方言形状（移植自
-/// `test_openapi_doc_batch_wrapper_and_duplicate_field`）：`transactions` 必填
-/// （无 `?` 后缀）、`dedup` 可缺省（`?` 后缀即 optionality 标记）。
 #[tokio::test]
 async fn contract_batch_wrapper_and_duplicate_field() {
     let doc = fetch_contract().await;
@@ -188,9 +158,6 @@ async fn contract_batch_wrapper_and_duplicate_field() {
     );
 }
 
-/// 幂等键不可编辑移植到方言形状（移植自
-/// `test_openapi_update_transaction_input_omits_idempotency_key`）：修改请求体
-/// 不含 `idempotency_key` 字段——方言以字段缺席表达「不可编辑」。
 #[tokio::test]
 async fn contract_update_input_omits_idempotency_key() {
     let doc = fetch_contract().await;
@@ -203,10 +170,6 @@ async fn contract_update_input_omits_idempotency_key() {
     );
 }
 
-/// 投资四字段描述锁移植到方言形状（移植自
-/// `test_openapi_investment_fields_have_descriptions`，issue #298 语义不动）：
-/// `instrument_id` / `quantity` / `price_cents` / `fee_cents` 在两个请求体
-/// schema 中带原文中文描述——契约仍是字段语义的唯一权威（user story 3）。
 #[tokio::test]
 async fn contract_investment_fields_keep_descriptions() {
     let doc = fetch_contract().await;
@@ -214,7 +177,6 @@ async fn contract_investment_fields_keep_descriptions() {
 
     for schema_name in ["TransactionInput", "UpdateTransactionInput"] {
         let props = &schemas[schema_name];
-        // 类型表达式同时锁定：str?（引用）/ f64?（数量）/ i64?（价格与费用）。
         let expected_types = [
             ("instrument_id?", "str?"),
             ("quantity?", "f64?"),
@@ -234,7 +196,6 @@ async fn contract_investment_fields_keep_descriptions() {
         }
     }
 
-    // buy/sell 语义原文保留（投资四字段描述锁的确定性措辞）。
     let merchant = &schemas["TransactionInput"]["merchant_name?"];
     let merchant_desc = merchant[1].as_str().unwrap();
     assert!(
@@ -243,28 +204,23 @@ async fn contract_investment_fields_keep_descriptions() {
     );
 }
 
-/// 类型表达式全覆盖（issue #839 测试决策）：现有 schema 恰好覆盖枚举闭集、
-/// 数组、可选、i64、f64 全部形态——逐形态断言，防投影规则静默漂移。
 #[tokio::test]
 async fn contract_type_expressions_cover_all_forms() {
     let doc = fetch_contract().await;
     let schemas = doc["schemas"].as_object().unwrap();
 
-    // 枚举闭集（多组）。
     assert_eq!(
         schemas["AccountType"],
         "cash|bank|credit|ewallet|investment|debt|receivable|other"
     );
     assert_eq!(schemas["InstrumentType"], "stock|fund|bond|etf|other");
 
-    // 数组：T[]。
     assert_eq!(schemas["TransactionListResult"]["items"], "Transaction[]");
     assert_eq!(
         schemas["TransactionBatchInput"]["transactions"],
         "TransactionInput[]"
     );
 
-    // 可选（? 后缀）与可空标量。
     assert_eq!(schemas["TransactionInput"]["amount_cents"], "i64");
     assert_eq!(schemas["TransactionInput"]["merchant_name?"][0], "str?");
     assert_eq!(
@@ -276,7 +232,6 @@ async fn contract_type_expressions_cover_all_forms() {
         "可空浮点（数量可含小数）= f64?"
     );
 
-    // 可空引用：oneOf(null + ref) 投影为 T?；成员描述保留为元组。
     assert_eq!(schemas["Transaction"]["source?"][0], "TransactionSource?");
     assert!(
         !schemas["Transaction"]["source?"][1]
@@ -286,14 +241,11 @@ async fn contract_type_expressions_cover_all_forms() {
         "来源字段描述保留（元组第二位）"
     );
 
-    // 带描述的引用字段：[schema 名, 描述] 元组。
     let kind = &schemas["TransactionSource"]["kind"];
     assert_eq!(kind[0], "TransactionSourceKind");
     assert!(!kind[1].as_str().unwrap_or_default().is_empty());
 }
 
-/// 出处剥离锁（issue #839）：方言投影期机械剥离 `issue #N` / `ADR-N` 引用，
-/// 而标准 OpenAPI 投影保留出处——两投影各取所需（user story 11）。
 #[tokio::test]
 async fn contract_strips_provenance_while_openapi_keeps_it() {
     let (app, _) = setup_app();
@@ -310,20 +262,16 @@ async fn contract_strips_provenance_while_openapi_keeps_it() {
         "标准 OpenAPI 投影保留出处引用（同一源，双投影分叉点）"
     );
 
-    // 剥离不伤语义：出处相邻的正文描述保持可读（非空壳括号、无悬挂标点）。
     let fund_desc = dialect["schemas"]["FundLookup"]["code"][1]
         .as_str()
         .unwrap_or_default();
-    let _ = fund_desc; // 字段级描述存在性已在其余锁覆盖；此处防误删整字段。
+    let _ = fund_desc;
     assert!(
         !dialect["schemas"]["ErrorResponse"]["kind"].is_null(),
         "ErrorResponse 字段在位（schema 级描述退役后字段语义仍完整）"
     );
 }
 
-/// 出资账户契约锁（issue #939 / ADR-0096 决策 8）：创建/修改请求体与交易读回
-/// schema 都带出可选出资账户字段——契约自描述端点随类型派生自动带出新字段
-/// 的验收面（字段可选、类型可选字符串、字段描述提及准入语义）。
 #[tokio::test]
 async fn contract_transaction_schemas_carry_funding_account() {
     let doc = fetch_contract().await;
@@ -344,11 +292,6 @@ async fn contract_transaction_schemas_carry_funding_account() {
     );
 }
 
-/// 份额调整（split）字段语义锁（issue #1054 / ADR-0106 决策 11）：AI / 契约是
-/// split 的唯一写入面，`TransactionInput.quantity` 的描述必须自描述方向符号
-/// （`+` 折算/结转/送股、`−` 缩股）、缩股取严只作用于 `−` 向、以及「无现金腿」
-/// 的准入口径（金额恒 0、单价不提供、费用只能为 0）——AI 据此能自行构造出被
-/// 接受的提交；描述退回「数量必须 > 0」旧口径或把守卫泛化到两向时本锁报红。
 #[tokio::test]
 async fn contract_transaction_input_quantity_describes_split_semantics() {
     let doc = fetch_contract().await;
@@ -359,7 +302,7 @@ async fn contract_transaction_input_quantity_describes_split_semantics() {
     for frag in [
         "带符号份额增量",
         "折算",
-        "`−` 缩股且 |Δ| 小于当前持仓", // 守卫只作用于 − 向（+Δ 折算/送股无上限）
+        "`−` 缩股且 |Δ| 小于当前持仓",
         "必须 ≠ 0",
         "无现金腿",
         "`price_cents` 不提供、`fee_cents` 只能为 0",
@@ -371,73 +314,6 @@ async fn contract_transaction_input_quantity_describes_split_semantics() {
     }
 }
 
-/// 方言体积预算护栏（issue #839）：产物 ≤22KB。
-///
-/// token 换算口径（与 issue 原型一致，不引入真实 tokenizer 依赖）：
-/// ASCII ≈ 1 token / 3.6 字符、中文 ≈ 0.95 token / 字符——原型实测 ~17KB
-/// ≈ ~5.1K tokens（契约单次拉取自 ~14.0K tokens 降 63%）。触线须人工决策提预算
-/// 或瘦身，不允许契约膨胀无声挤占 AI 上下文（延续 #304 / #693 契约膨胀护栏传统）。
-/// 基金转换（issue #978/#979）加入 `TransactionInput` / `UpdateTransactionInput`
-/// 的两腿可选字段、`ConvertFields.to_symbol` 后已逼近预算（≈19.9KB）——注意
-/// `TransactionConvert` / `TransactionTrade` 是 IPC 专用投影，不在 `ApiDoc` 组件内，
-/// 不占方言体积。
-///
-/// issue #981 复核：实测 20412 字节，余量仅 68（上限 20480），已逼近上限。已发布
-/// 字段描述受 `AGENTS.md`「已发布 AI API 契约只增不改」约束，本票不动契约；后续
-/// 任何新增字段都会触线，须先人工决策：对**未发布新增**的字段描述做一轮显式瘦身，
-/// 或经维护者同意提高预算——不得默默挤占 AI 上下文（决策建议已在 issue #981 留痕）。
-///
-/// issue #1069 触线：`Instrument.price_channel` 派生字段与 `PriceChannel` 组件带入
-/// 后实测 20732 字节越过原 20480，经维护者决策提至 22KB（≈6.3K tokens）——新字段
-/// 描述承载价格通道语义、无冗余可削，留痕见 ADR-0090 决策 6。
-///
-/// issue #1123 复核：投资知识端点进入契约发现面（20 端点）后实测 22057 字节，
-/// 仍在 22KB 预算内（余量约 471B）——下一个新增端点/字段大概率触线，届时须人工
-/// 决策提预算或瘦身，延续本护栏的留痕传统。
-///
-/// spec #1327 / ADR-0119（信用卡档案字段：额度 / 账单日 / 还款日）：三个字段跨
-/// `Account` / `AccountInput` / `AccountUpdateInput` 三个 schema，字段描述先收敛到
-/// 单行（已削 374 字节、无冗余可再削）后实测 23192 字节仍越 22KB，本票提至 24KB。
-/// 不选「删描述换预算」：额度是档案字段，「不参与余额与净资产」必须写在契约里让
-/// AI 读到，删掉描述会让 AI 把额度误读成余额口径（ADR-0119 后果节留痕）。
-///
-/// issue #1631 触线：`GET /transactions` 补 HTTP 缺省上限与 400 两码声明后实测
-/// 24793 字节越 24KB（超 217 字节）。选择 #981 留痕传统的另一支路——对**未发布
-/// 新增**描述显式瘦身（省 298 字节 → 24495，预算维持 24KB）：错误码语义不丢
-/// （两码完整保留在 400 响应与参数描述中，端点描述不再三重复述），仅删端点描述
-/// 与参数/响应描述的重复表述及对 HTTP 调用者无操作价值的 IPC 内部注解；已发布
-/// 描述零改动。
-///
-/// issue #1549 触线：`TransactionInput.fx_rate` / `UpdateTransactionInput.fx_rate`
-/// 两个新字段描述已瘦身至语义必需（方向乘数、优先级、缺省行为、非法值不落库）
-/// 后实测 25031 字节仍越 24KB，经同样的人工决策分支提至 25KB：逐笔显式汇率正是
-/// 面向 AI / 迁移调用方的新能力，取数方向与失败语义必须写在契约里让调用方读到，
-/// 删掉描述会让 AI 把 `fx_rate` 误当任意方向汇率提交。
-///
-/// issue #1860 / ADR-0138 触线：多出资方（组合支付）契约面——`TransactionFunding` /
-/// `TransactionFundingInput` 两个 schema、`funding` / `fundings` 字段、`account_id` 三处
-/// 可空化改写与 6 个出资错误码——加入后实测 27750 字节越 25KB，提至 28KB：超量落在
-/// 剥离出处引用后的语义文本上，互斥二选一、refund 缺省派生标记与出资准入口径是 AI
-/// 正确读写分解行的必需语义，不选删描述换预算（同 ADR-0119 后果节决策）。
-///
-/// issue #1862 / ADR-0138 触线：来源订单号契约面——`TransactionInput` /
-/// `UpdateTransactionInput` / `Transaction` 三处可选 `source_order_no` 字段——加入后
-/// 实测 28826 字节越 28KB。描述按 #1631 先例瘦身至语义必需（同单多行同单号、
-/// 不入备注、不限 kind、缺省即不带、全量替换）后回落至预算内，预算随新功能面
-/// 提至 29KB 留增长余量（维护者决策，同 #1860 决策分支）。
-///
-/// issue #1882 / ADR-0138 触线：购买项契约面——`TransactionPurchase` /
-/// `TransactionPurchaseInput` 两个 schema、`purchases` 字段三处与 5 个购买项错误码——
-/// 加入后实测 30388 字节越 29KB，提至 30KB：超量落在剥离出处引用后的语义文本上，
-/// kind 准入（仅 expense）、数组顺序即对账单顺序与「价格拿不到就留空、不猜不编造」
-/// 是 AI 正确读写购买项的必需语义，不选删描述换预算（同 #1860 决策分支）。
-///
-/// issue #1953 / ADR-0142 触线：账户归档契约面——`Account.is_archived` 与
-/// `AccountUpdateInput.is_archived` 两个字段、`PUT /accounts/{id}` 的可选归档键说明——
-/// 加入后实测 31069 字节越 30KB。描述已按 #1631 先例瘦身至语义必需（收纳态 =
-/// 余额与净资产照旧计入、读面不过滤；可选键缺席 = 不改）后仍越线：本项可省字节
-/// 不足 60（空描述实测 30601），再删就删掉「归档不改金额口径」这条 ADR-0142 的
-/// 核心语义（AI 对账读面需要它），故沿用 #1860 / #1882 分支提至 31KB。
 #[tokio::test]
 async fn contract_size_within_budget() {
     let (app, _) = setup_app();
@@ -459,11 +335,6 @@ async fn contract_size_within_budget() {
     );
 }
 
-/// 数据源中立守门（issue #1569 / ADR-0130）：契约方言产物不得把东方财富当作
-/// 数据源陈述——端点描述、故障描述（网络不可达语义）、降级建行、「精确交易所」
-/// 措辞与基金分类弃用说明一律用「行情源」中立交称。负向断言对准方言产物全文
-/// （任一注解层描述改回东财措辞即红，ADR-0087）；导入知识半边见
-/// `documentation.rs` 的 `test_knowledge_sections_are_data_source_neutral`。
 #[tokio::test]
 async fn contract_is_data_source_neutral() {
     let doc = fetch_contract().await;
@@ -487,9 +358,6 @@ async fn contract_is_data_source_neutral() {
     }
 }
 
-/// AI 契约自描述面同步锁（issue #1810 / ADR-0136 决策 5）：方言不投影 params 结构，
-/// 端点描述 `d` 是 AI 读到查询参数名的唯一面——新可选参数必须出现在 GET /transactions
-/// 自述的参数清单里（删除该名字即红）。OpenAPI 半边的参数清单锁见 documentation.rs。
 #[tokio::test]
 async fn contract_list_transactions_describes_hide_investment_related_param() {
     let doc = fetch_contract().await;
@@ -506,10 +374,6 @@ async fn contract_list_transactions_describes_hide_investment_related_param() {
     );
 }
 
-/// 购买项契约锁（issue #1882 / ADR-0138 决策 9/10）：创建/修改请求体与交易读回
-/// schema 都带出 `purchases` 字段、条目 schema 携带可空单价语义——契约自描述端点
-/// 随类型派生自动带出新字段的验收面（AI 据此构造购买项提交；「价格拿不到就留空、
-/// 不猜不编造」的教学前提是契约里写得出来）。
 #[tokio::test]
 async fn contract_transaction_schemas_carry_purchases() {
     let doc = fetch_contract().await;

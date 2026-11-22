@@ -15,16 +15,7 @@ import {
   findDrawerItem,
 } from "@ledger/test-support/mobile-nav";
 
-/**
- * App 壳按窗口分级分支（issue #842 / ADR-0088 决策 2/4）：经假 matchMedia 换档
- * （spec #838 唯一新接缝），断言两档渲染分支与移动档导航壳行为——
- * ≥840 桌面档零变化（侧栏在、移动壳不在）；<840 移动档抽屉可达全部视图
- * （固定项 + 各组主项 + 各组「更多」页签页），ViewState 组内序/收纳清单
- * 在抽屉中正确渲染且写路径语义零改动。
- */
-
 async function mountApp() {
-  // 启动门探测（issue #570 / #601）：桩为明文就绪让主界面照常挂载（sidebar-more-link.test 同款）
   wireInvokeSeam({ defaults: { get_boot_status: { phase: "ready", error_code: null } } });
   const router = createRouter({ history: createMemoryHistory(), routes });
   await router.push("/dashboard");
@@ -34,13 +25,6 @@ async function mountApp() {
   return { wrapper, router };
 }
 
-/**
- * 懒加载路由组件预热（issue #1337）：先 `await` 目标路由记录的动态 import，再触发
- * 抽屉点击导航——导航确认只需等动态 import 完成，冷启动时其耗时（如 GroupMoreView
- * 聚合页实测 ~1308ms）会越过 `vi.waitFor` 默认 1000ms 预算，预热后即回落到毫秒级。
- * 只消费路由记录既有的懒加载器，不改路由的懒加载结构（#1162 同族：抬预算只抬余量，
- * 不治本；这里不引入 retry）。
- */
 async function preloadRouteView(name: string) {
   const record = routes.find((r) => r.name === name);
   if (!record || typeof record.component !== "function") {
@@ -60,7 +44,6 @@ describe("App 壳窗口分级分支（issue #842，假 matchMedia 换档）", ()
     expect(wrapper.find(".mobile-top-bar").exists()).toBe(false);
     expect(document.body.querySelector(".n-drawer")).toBeNull();
     expect(hasOpenOverlay()).toBe(false);
-    // 桌面档键位带照渲染（ADR-0065）：侧栏菜单项含键位提示（jsdom 平台非 mac，字符为 ⌃）
     const siderText = wrapper.find(".n-layout-sider").text();
     expect(siderText).toContain("⌃1");
     expect(siderText).toContain("⌃,");
@@ -82,7 +65,6 @@ describe("App 壳窗口分级分支（issue #842，假 matchMedia 换档）", ()
     await openMobileDrawer(wrapper);
     expect(hasOpenOverlay()).toBe(true);
     const items = drawerMenuItemTexts().join("|");
-    // 固定项（概览/AI/设置）与三组主项（出厂序）
     for (const label of [
       "概览",
       "交易",
@@ -97,7 +79,6 @@ describe("App 壳窗口分级分支（issue #842，假 matchMedia 换档）", ()
     ]) {
       expect(items, `抽屉应含 ${label}`).toContain(label);
     }
-    // 各组「更多」页签页入口：出厂种子非空组有链接、空清单组无链接（与侧栏同条件）
     expect(drawerMoreLinkTexts()).toEqual(["更多", "更多"]);
     expect(drawerGroupTitles()).toEqual(["记账", "资产", "洞察"]);
   });
@@ -109,12 +90,10 @@ describe("App 壳窗口分级分支（issue #842，假 matchMedia 换档）", ()
     for (const text of drawerMenuItemTexts()) {
       expect(text, `抽屉菜单项不应含键位提示：${text}`).not.toMatch(/[⌘⌃]/);
     }
-    // 同一份导航状态剥离键位带后仍完整：抽屉菜单与桌面侧栏同构（视图集一致）
-    expect(drawerMenuItemTexts()).toHaveLength(11); // 八主项 + 概览 + AI + 设置
+    expect(drawerMenuItemTexts()).toHaveLength(11);
   });
 
   it("ViewState 组内序在抽屉中正确渲染：存量自定义序经解析防御后按序呈现", async () => {
-    // 先写存储再挂载：store 启动读路径在首次实例化时消费（单一归宿纪律）
     localStorage.setItem(
       "view_state:sidebar_order",
       JSON.stringify({ bookkeeping: ["budget", "transactions", "accounts"] }),
@@ -149,7 +128,6 @@ describe("App 壳窗口分级分支（issue #842，假 matchMedia 换档）", ()
     await preloadRouteView("transactions");
     await openMobileDrawer(wrapper);
     findDrawerItem("交易").click();
-    // 路由目标是懒加载视图：导航完成需等动态 import（waitFor 轮询而非固定等待）
     await vi.waitFor(() => {
       expect(router.currentRoute.value.name).toBe("transactions");
     });
@@ -169,7 +147,6 @@ describe("App 壳窗口分级分支（issue #842，假 matchMedia 换档）", ()
     });
     await flushPromises();
     expect(hasOpenOverlay()).toBe(false);
-    // 顶栏视图名随「更多」页切换（viewLabel 同源）
     expect(wrapper.find(".mobile-top-bar-title").text()).toBe("记账 · 更多");
   });
 
@@ -182,7 +159,6 @@ describe("App 壳窗口分级分支（issue #842，假 matchMedia 换档）", ()
     await flushPromises();
     expect(wrapper.find(".mobile-top-bar").exists()).toBe(false);
     expect(wrapper.find(".n-layout-sider").exists()).toBe(true);
-    // AppDrawer 卸载兜底：抽屉开着被换档卸载也不滞留开放态（快捷键不被永久抑制）
     expect(hasOpenOverlay()).toBe(false);
   });
 });

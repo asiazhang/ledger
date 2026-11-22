@@ -6,24 +6,16 @@ import App from "@/App.vue";
 import { routes } from "@/router";
 import { useSidebarOrderStore, GROUP_CONTAINMENT_SEEDS } from "@/stores/sidebar-order";
 
-// 侧栏组标题行「更多」链接显隐渲染（issue #475 验收末项：移回组内最后一个收纳成员后链接消失；
-// #472/#473 建立的渲染条件 = 清单非空，App.vue 消费 sidebarContainment 响应式派生）。
-// 容器内测试只覆盖「镜像面」（清单空 → 零页签），此处挂真实 App 侧栏断言链接本体。
-
 async function mountApp() {
-  // 启动门探测（issue #570 / #601）：App 启动先探测启动状态，本票与侧栏无关，
-  // 桩为明文就绪让主界面照常挂载；其余命令由接缝未命中报错兜底（fail-loud）。
   wireInvokeSeam({ defaults: { get_boot_status: { phase: "ready", error_code: null } } });
   const r = createRouter({ history: createMemoryHistory(), routes });
   await r.push("/dashboard");
   await r.isReady();
-  // RouterView 打桩：侧栏渲染与本票无关，避免懒加载真实视图拉取数据
   const wrapper = mount(App, { global: { plugins: [r], stubs: { RouterView: true } } });
   await flushPromises();
   return wrapper;
 }
 
-/** 各组「更多」链接数（出厂种子非空的组各 1 条，空组 0 条） */
 function linkCount(wrapper: { findAll: (s: string) => unknown[] }): number {
   return wrapper.findAll(".group-more-link").length;
 }
@@ -45,7 +37,6 @@ describe("侧栏组标题行「更多」链接显隐渲染（issue #475 / ADR-00
     store.applyMoveIntoMore("reports");
     await flushPromises();
     expect(linkCount(wrapper)).toBe(3);
-    // 移回组内全部收纳成员：清单回空，链接随之消失（零弹窗、零换出，纯渲染条件）
     store.applyMoveIntoMore("search");
     store.applyMoveBackToSidebar("reports");
     await flushPromises();
@@ -61,10 +52,9 @@ describe("侧栏组标题行「更多」链接显隐渲染（issue #475 / ADR-00
     store.applyMoveIntoMore("reports");
     await flushPromises();
     expect(linkCount(wrapper)).toBe(3);
-    store.applyMoveBackToSidebar("reports"); // 洞察组最后一个收纳成员移回：链接消失，出厂两链接保持
+    store.applyMoveBackToSidebar("reports");
     await flushPromises();
     expect(linkCount(wrapper)).toBe(2);
-    // 记账出厂满员：移回拒写（菜单置灰的第一道防线之下的写路径兜底），渲染面无变化
     store.applyMoveBackToSidebar("scheduled");
     await flushPromises();
     expect(linkCount(wrapper)).toBe(2);

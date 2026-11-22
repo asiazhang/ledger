@@ -11,13 +11,6 @@ import {
   saveSidebarOrders,
 } from "@ledger/utils/view-state";
 
-// 交易页视图偏好 store 接口测试（issue #1811 / ADR-0136 决策 1）。
-// 偏好是设备级持久裁决（「视图偏好」词条）：具名 Pinia store 是唯一读写方，
-// localStorage（ViewState 家族）承载、不入账本 SQLite、不进备份、不参与多端同步。
-// 「重启」惯用法 = setActivePinia(createPinia())：store 首次实例化即启动读路径
-// （读 view_state:hide_investment_related 经解析防御），新 pinia = 新一次启动。
-
-/** 重启：换新 pinia，下一次 useTransactionViewPreferencesStore() 即新一次启动读路径 */
 function reboot() {
   setActivePinia(createPinia());
 }

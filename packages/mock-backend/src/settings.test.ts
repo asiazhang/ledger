@@ -2,18 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { installMockBackend } from "./index";
 import { invoke } from "./tauri/core";
 
-/**
- * 设置域替身行为测试（issue #1965 / spec #1964 / ADR-0143）：接缝 = 应用所见
- * 的 tauri 命令面（`installMockBackend` + `invoke`），断言布线与行为一体——
- * 删除任一登记行即未命中报错、本文件变红（接线负向判据，ADR-0087 断言强度）。
- *
- * 域取向（spec #1964）：本位币 / 日志等级为内存态（缺省 CNY / info，写入改
- * 内存、读投影内存、重装重播种）；构建信息与 AI 提示答字面量；开关推送与壳
- * 命令 no-op 应答——保证启动链路不弹错、设置页「通用」「关于」可导航。
- */
-
 beforeEach(() => {
-  installMockBackend(); // 重装即重播种：每用例从夹具种子起步
+  installMockBackend();
 });
 
 describe("启动链路开关推送：no-op 应答 void", () => {

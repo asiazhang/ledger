@@ -1,8 +1,3 @@
-//! IPC 命令壳枢纽：命令域模块声明 + 扁平 `pub use` 链（注册路径 `commands::<name>`，
-//! ADR-0047）。写命令的「命令 → 写操作身份」声明已随 ADR-0073（spec #523）内化
-//! 进统一写入口 `write_entry` 的调用点，壳侧接线由源码扫描守门核对
-//! （`signals_cross_check`，ADR-0073 决策 5）。
-
 pub mod accounts;
 pub mod ai;
 pub mod app_info;

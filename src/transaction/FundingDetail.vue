@@ -19,36 +19,20 @@ import {
 import OrderSection from "@/transaction/OrderSection.vue";
 import type { TransactionModalRow } from "@ledger/types";
 
-/**
- * 出资分解只读详情（issue #1861 / ADR-0138 决策 8）：带非空出资分解的交易行
- * （分解 expense/income、显式覆盖与派生分解的 refund）的只读呈现面——基本信息
- * （DetailBasics 共用块）+ 出资项列表（账户 / 扣款标签徽标 / 金额）+ Σ 合计行；
- * 退款派生分解（读时推导、不落库，ADR-0138 决策 5）另带「按比例自动分解」标注；
- * 分解行同时携带购买项时，购买项清单区同层并陈（issue #1884 / ADR-0138 决策 15，
- * 与出资项列表对称）。
- *
- * 编辑 / 退款表单尚未支持分解（录入侧本票范围外），分解行不开放写入口，
- * 纠错走删除重建或 HTTP 契约。出资项金额为交易币种原始金额（Σ == 交易金额），
- * 经 formatAmount 按行币种格式化，隐私模式同层收口。
- */
 const props = defineProps<{
-  /** 交易行（弹窗族行投影，分解行随读回携带 fundings） */
   row: TransactionModalRow;
 }>();
 
 const reference = useReferenceStore();
 
-/** 未知账户回退占位（与列表账户列同口径，不抛错）。 */
 function accountName(accountId: string): string {
   return reference.accountMap.get(accountId)?.name ?? "—";
 }
 
-/** 行币种下的金额格式化（出资项为交易币种原始金额）。 */
 function fundingAmount(cents: number): string {
   return formatAmount(cents, reference.getCurrency(props.row.currency_code));
 }
 
-/** 退款派生分解（读时推导、不落库）：任意条目 derived=true 即派生。 */
 const derived = computed(() => props.row.fundings.some((f) => f.derived));
 </script>
 

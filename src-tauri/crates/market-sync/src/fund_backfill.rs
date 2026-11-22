@@ -1,17 +1,3 @@
-//! 基金**历史回填**单元（issue #1388 自 `fund_nav` 拆出；ADR-0038 决策 6 /
-//! ADR-0122 决策 2；issue #1377 起归价格历史后台补全专用）：首刷判据 = 磁盘上
-//! 没有任何历史序列；首刷回填覆盖到**首笔持仓流水日所在周**（无持仓流水则近
-//! 两年，issue #1534 深度放宽——单请求全量通道下不增网络请求，只多落周采样行）；
-//! 增量以现价缓存净值日期为水位、取水位次日之后；覆盖不足（最早周点晚于首笔
-//! 持仓周）的存量基金整根深回填到首笔持仓周。取数走**新浪单只全历史面**
-//!（issue #1566 / ADR-0130 决策 2：一次请求整只历史单位净值，含已终止基金），
-//! 窗口语义由本地裁剪表达，不依赖服务端窗口过滤行为。
-//! 零新点不落库（重复补全幂等，全部周点已入库且同值时整只零写入，issue #1534）。
-//! 未打标标的回填前先经官方披露判定门（issue #1563 / ADR-0126 决策 3 换源）：
-//! 确认即打标收尾、零抓取，万份收益不得经取数面冒充单位净值落库（#1342）。
-//!
-//! 水位窗口与水位读留守 `fund_nav`，本模块只收历史回填的编排。
-
 use chrono::NaiveDate;
 
 use ledger_infra::db::tx_scope::ensure_transaction;
@@ -30,45 +16,12 @@ use super::fund_nav::{
 use super::session::ScopedSession;
 use super::weekly::commit_price_history_weekly;
 
-/// 单只基金历史回填的结局（issue #1377 走势空态三态的判据输入）：`written` =
-/// 是否实际落库；`inconclusive` = 本轮结局不可信（披露源不可信）——整只不落库、
-/// 结果不可信，后台补全据此把该只记为「待重试」而非「无数据」。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct BackfillOutcome {
     pub(super) written: bool,
     pub(super) inconclusive: bool,
 }
 
-/// 单只 fund 标的的**历史回填**单元（ADR-0038 决策 6 / ADR-0122 决策 2；issue
-/// #1377 起归价格历史后台补全专用——现价刷新走
-/// [`super::fund_price_refresh::refresh_one_fund_price`]，「同步标的信息」不再承担首刷）：
-/// **首刷判据 = 磁盘上没有任何历史序列**（issue
-/// #1059）。首刷窗口起点 = 近两年与首笔持仓流水日所在周周一的较早者（无持仓
-/// 流水 = 近两年；issue #1534 深度放宽）；已有历史序列者若覆盖不足（最早周点
-/// 晚于首笔持仓周）同样整根深回填到首笔持仓周，否则以现价缓存的净值日期为水位
-/// 增量（水位当日不重拉、只取水位次日之后）。取数一次请求拿整只历史单位净值
-///（新浪全历史面，含已终止基金），本地裁剪到窗口（取数失败上抛交下一窗口重试，
-/// 不把不可信结果当「无净值」——fail-closed，issue #1566）。窗口内全部周点均已
-/// 入库且同值时零落库（重复补全幂等，零新点不置脏不广播，issue #1534）。
-/// 净值点降采样落 PriceHistory（同周整周覆盖幂等），窗口内最新公布净值落现价缓存
-///（现价 = 单位净值、priced_at = nav_date = 净值日期，与 #301 添加基金同形）。
-/// 周采样与现价落库在**一只一个事务**里整只一次提交（ADR-0122 决策 8 / issue
-/// #1373）：第 N 个周点写入失败或中途中断整体回滚，磁盘上不留半根历史——「有
-/// 历史序列」与「历史完整」由此等价，首刷判据（ADR-0038 决策 6）依赖的正是这个
-/// 等价。
-///
-/// **判定门前置（issue #1563 / ADR-0126 决策 3 换源）**：未打标标的抓取前先查
-/// 官方披露自报形态——确认即打标收尾（单向，幂等；现价缓存保留建档一条、不落
-/// 历史周点），**零净值抓取请求**；缺信号照常回填（不清空既有标记）；披露源
-/// 不可信则本轮整只不落，按 `inconclusive` 待重试。**「排队后才被并行刷新打标」
-/// 的竞态窗（issue #1711）由这道门单点承接**——队列项携带的通道是收集时点的投影
-///（执行侧不重读，恒定通道行在收集侧已被排除），打标后的行仍带净值通道进来；
-/// 判定信号取官方披露而非本地标记，确认即打标收尾（单向幂等），零净值抓取请求。
-///
-/// **前置条件**：`fund` 为 6 位真实代码的有通道基金行。跳过语义：首刷查无净值
-///（查无此码 / 新基金未公布首期 / 已终止基金的末点在窗口外）不报错不中断，以
-/// [`BackfillOutcome`] 表达结局；单只取数失败上抛（后台补全编排单只失败不中断
-/// 本轮）。
 pub(super) async fn backfill_one_fund_history<Q, H, C>(
     session: &Q,
     fund: &FundIdentity<'_>,
@@ -76,23 +29,12 @@ pub(super) async fn backfill_one_fund_history<Q, H, C>(
     confirm_money_fund: &mut C,
 ) -> Result<BackfillOutcome>
 where
-    // 作用域会话接缝（issue #1275）：本函数读写库的唯一通道，签名层面取不到连接。
     Q: ScopedSession,
-    // 新浪单只全历史通道（issue #1566）：6 位代码 → 整只历史单位净值。
     H: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
-    // 货基判定确认通道（issue #1563）：6 位代码 → 官方披露自报形态三态。
     C: FnMut(&str) -> FetchFuture<bool> + Send,
 {
     let today = super::incremental::beijing_today();
-    // 水位 = 现价缓存的净值日期（股票行恒 NULL，基金行由 #301/本通道写入）；首刷
-    // 判据 = 磁盘上没有任何历史序列（issue #1059）：添加基金 / AI 导入在
-    // 「按代码即拉」时已把最新净值落现价缓存（水位有值）但 PriceHistory 为空，
-    // 若以水位作增量起点，增量窗口只剩「水位次日」而近两年回填静默落空
-    //（#303 验收在真实账本上未成立的根因）。水位只服务已有历史序列的增量。
-    // 两条读经作用域会话短暂取一次连接完成（issue #1275）；抓取前不再触碰连接。
     let (watermark, has_history) = read_fund_watermark(session, fund.instrument_id).await?;
-    // 覆盖深度（issue #1534）：首笔持仓流水日早于近两年的基金，窗口起点放宽到
-    // 首笔持仓所在周；已有历史但覆盖不足（最早周点晚于首笔持仓周）者同样深回填。
     let (earliest_history, first_position_date) =
         read_fund_coverage(session, fund.instrument_id).await?;
     let deep = !has_history
@@ -106,14 +48,6 @@ where
         nav_window(watermark.as_deref(), today)
     };
 
-    // 判定门前置（issue #1563 / ADR-0126 决策 3 换源）：官方披露自报形态确认即
-    // 打标收尾——不发起净值抓取，万份收益不得经取数面冒充单位净值落库（#1342）。
-    // 确认单向幂等：已标记行零触碰、缺信号（Ok(false)）不清空、照常回填；披露
-    // 源不可信（Err）则本轮整只不落，按不可信结局待重试。「排队后才被并行刷新
-    // 打标」的竞态窗（issue #1711）同样落在这道门里：队列项的通道是收集时点投影
-    //（执行侧不重读），打标后的行仍带净值通道进来；判定信号取官方披露而非本地
-    // 标记——确认即打标收尾（幂等），不为它另设恒定通道短路臂。（唯一生产调用
-    // 路径下本守卫恒真：恒定通道行在收集侧已排除；留守卫作前置条件声明。）
     if fund.channel != PriceChannel::Constant {
         match confirm_money_fund(fund.code).await {
             Ok(true) => {
@@ -143,29 +77,16 @@ where
         }
     }
 
-    // 单只全历史通道（issue #1566 / ADR-0130 决策 2）：一次请求拿整只基金的
-    // 历史单位净值（含已终止基金），本地裁剪到窗口。失败语义 fail-closed：取数
-    // 失败（网络 / 报文不可信 / 窗口截断）一律上抛，下一窗口按派生事实重试，
-    // 不把不可信结果当「无净值」——半根历史冒充完整数据比慢更糟（ADR-0122
-    // 决策 8 的「整只不落」由「要么全序列可信、要么零落库」承接）。
     let points: Vec<NavPoint> = fetch_nav_history(fund.code).await?;
     let collected: Vec<NavPoint> = trim_to_window(points, &start, &end);
 
     if collected.is_empty() {
-        // 首刷查无净值（查无此码 / 新基金未公布首期 / 已终止基金末点在窗口外）
-        // 与增量窗口内确实无新净值（T+1 正常空窗）：结局确定——无可采数据 /
-        // 已是最新。（全历史面的可信空与报错在取数层已区分开，issue #1566。）
         return Ok(BackfillOutcome {
             written: false,
             inconclusive: false,
         });
     }
 
-    // 现价 = 窗口内最新公布单位净值；priced_at = nav_date = 净值日期
-    // （与 #301 添加基金同形；nav_date 兼任下次同步的水位）。
-    // let-else 显式防线（#434，ADR-0060 A 类临时豁免已摘）：points 非空由
-    // 前文判空保证，此臂理论不可达；一旦前置防线被移除，此处记警告并跳过
-    // 该只、不中断同步。
     let Some(latest) = collected.iter().max_by_key(|p| p.date.as_str()) else {
         tracing::warn!(code = %fund.code, "净值点意外为空，跳过现价更新");
         return Ok(BackfillOutcome {
@@ -174,21 +95,6 @@ where
         });
     };
 
-    // 周采样与现价落库同在一只一个事务里（ADR-0122 决策 8 / issue #1373）：单只
-    // 标的的历史回填整只一次提交，第 N 个周点写入失败或中途中断整体回滚，磁盘上
-    // 不留半根历史——「有历史序列」与「历史完整」由此等价，首刷判据（ADR-0038
-    // 决策 6）依赖的正是这个等价。周点落库经原语（[`commit_price_history_weekly`]，
-    // spec #1677）：采样、判新（同周同值零写入）、覆盖与事务边界收口一处，降采样
-    // 只算一遍；零新点时整只零落库（含现价——无新周点即无更新净值，现价必然
-    // 已是最新）零新点不置脏不广播。单位净值即价格（ADR-0038 决策 3），净值点
-    // 以载体中立逐日点集直入原语，不再经 KlineBar 适配壳。落库经作用域会话短暂
-    // 取一次连接（issue #1275）；抓取已在会话之外完成。事务经
-    // [`ensure_transaction`]（ADR-0033 嵌套感知）：连接 autocommit 则自持事务、
-    // 已在事务中则加入外层。「一只一事务」的前提是写错误**不被吞**——本函数的
-    // 写失败一律经 `?` 上抛，加入外层时由外层持有者回滚，同样整只不留；任一层
-    // 吞掉写错误才会破坏前提。
-    // 日期解析失败按缺失点跳过（与降采样核心的无效点跳过同一品味，spec #1677
-    // 前的净值腿同此行为）；净值日期由取数层契约保证为 ISO 形态。
     let daily_points: Vec<(NaiveDate, f64)> = collected
         .iter()
         .filter_map(|p| Some((NaiveDate::parse_from_str(&p.date, "%Y-%m-%d").ok()?, p.nav)))
@@ -200,8 +106,6 @@ where
     let written: bool = session
         .with_connection(move |conn| {
             ensure_transaction(conn, || {
-                // 零新点防线（issue #1534）：窗口内全部周点均已入库且同值
-                //（覆盖不足但源无更深点 / 重复补全）时整只零落库。
                 if !commit_price_history_weekly(
                     conn,
                     &instrument_id,
@@ -211,15 +115,12 @@ where
                 )? {
                     return Ok(false);
                 }
-                // 周采样落库与新点伴随的现价写在同一事务里整只一次提交。
                 upsert_market_price(
                     conn,
                     &MarketPriceWrite {
                         instrument_id: &instrument_id,
                         price_cents: price_value_to_cents(latest_nav),
                         currency_code: &currency,
-                        // 基金现价时点 = 净值日期（现价的行情日期就是净值本身对应的日期）；
-                        // nav_date 兼任下次同步的水位。
                         priced_at: &latest_date,
                         nav_date: Some(&latest_date),
                         source: Some(SINA_PRICE_SOURCE),

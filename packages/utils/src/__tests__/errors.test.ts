@@ -30,7 +30,6 @@ describe("errorMessage", () => {
 
 describe("errorMessage 错误码本地化（issue #342 二期 / ADR-0050）", () => {
   beforeEach(() => {
-    // 注入码表夹具（真实码表由后端清点归并进 errors.json，单测自足）
     i18n.global.mergeLocaleMessage("zh-CN", {
       errors: {
         transfer: { "to-account-required": "转账目标账户不能为空" },
@@ -80,7 +79,6 @@ describe("errorMessage 错误码本地化（issue #342 二期 / ADR-0050）", ()
         params: ["USD", "CNY"],
       }),
     ).toBe("Missing USD→CNY exchange rate");
-    // 中文界面插值后与后端原文逐字一致
     await applyLocale("zh-CN");
     expect(
       errorMessage({
@@ -135,8 +133,6 @@ describe("errorMessage 错误码本地化（issue #342 二期 / ADR-0050）", ()
   });
 
   it("params 不足时回退透传 message，不渲染空悬占位符（issue #957 守卫）", () => {
-    // 模板声明 2 个占位符、只给 1 个：插值会得到「缺少 USD→ 汇率」——
-    // 比后端原文更难读，故回退完整句。
     expect(
       errorMessage({
         kind: "Invalid",
@@ -145,7 +141,6 @@ describe("errorMessage 错误码本地化（issue #342 二期 / ADR-0050）", ()
         params: ["USD"],
       }),
     ).toBe("缺少 USD→CNY 汇率，无法折算");
-    // 完全无 params 同理（后端声明了插值参数却没给）。
     expect(
       errorMessage({
         kind: "Invalid",
@@ -153,7 +148,6 @@ describe("errorMessage 错误码本地化（issue #342 二期 / ADR-0050）", ()
         code: "fx.rate-missing",
       }),
     ).toBe("缺少 USD→CNY 汇率，无法折算");
-    // 空数组与缺席等价。
     expect(
       errorMessage({
         kind: "Invalid",

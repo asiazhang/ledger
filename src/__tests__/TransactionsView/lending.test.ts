@@ -18,7 +18,6 @@ import TransferForm from "@/transaction/TransferForm.vue";
 import TransactionForm from "@/transaction/TransactionForm.vue";
 import type { Account } from "@ledger/types";
 
-/** 覆盖资金侧 + 借出侧 + 负债侧的账户集（经 setAccountDb 注入，issue #374）。 */
 const lendingAccounts: Account[] = [
   { id: "acc-cash", name: "现金", type: "cash" },
   { id: "acc-bank", name: "银行", type: "bank" },
@@ -37,8 +36,6 @@ const lendingAccounts: Account[] = [
 })) as Account[];
 
 beforeEach(async () => {
-  // common 的 beforeEach（先注册先执行）已建好 pinia 与 mockInvoke；
-  // 这里换入借贷账户集并重拉参考数据，供下拉过滤与标签派生消费。
   setAccountDb(lendingAccounts);
   await useReferenceStore().refresh();
 });
@@ -46,7 +43,6 @@ beforeEach(async () => {
 describe("交易列表借贷类型标签（issue #374：transfer 派生视角，不新增 kind）", () => {
   beforeEach(() => {
     setTxnDb([
-      // 借贷四方向：识别唯一依据是两端账户类型
       makeTxn(1, "acc-cash", {
         kind: "transfer",
         to_account_id: "acc-recv-zhang",
@@ -63,7 +59,6 @@ describe("交易列表借贷类型标签（issue #374：transfer 派生视角，
         note: "向李四借入",
       }),
       makeTxn(4, "acc-cash", { kind: "transfer", to_account_id: "acc-debt-li", note: "还李四" }),
-      // 普通转账与非转账不受影响
       makeTxn(5, "acc-cash", { kind: "transfer", to_account_id: "acc-bank", note: "普通转账" }),
       makeTxn(6, "acc-cash", { kind: "expense", note: "午饭" }),
     ]);
@@ -102,20 +97,15 @@ describe("交易列表借贷编辑形态识别（issue #374）", () => {
     await openEditModal(wrapper, 0);
     expect(editModal(wrapper).props("show")).toBe(true);
     const form = wrapper.findComponent(TransactionForm);
-    // 借贷形态：LendingForm 呈现（方向由账户类型派生），无转账表单
     const lending = form.findComponent(LendingForm);
     expect(lending.exists()).toBe(true);
     expect(form.findComponent(TransferForm).exists()).toBe(false);
-    // 方向按钮组四方向齐备，当前方向「借出」高亮（primary）
     const dirButtons = lending
       .findAllComponents(NButton)
       .filter((b) => ["借出", "收回", "借入", "还款"].includes(b.text()));
     expect(dirButtons.map((b) => b.text())).toEqual(["借出", "收回", "借入", "还款"]);
     const active = dirButtons.find((b) => b.props("type") === "primary");
     expect(active?.text()).toBe("借出");
-    // 双账户按既有交易回填（转出=现金，转入=借出·张三）；金额同步回填（1 元，字段
-    // 错误态改造后金额为自由文本输入框，ADR-0058 / #415）；
-    // PinyinSelect 经 attrs 透传（无声明 props），从内层 NSelect 读取声明 prop
     const selects = lending.findAllComponents(PinyinSelect);
     const [fromSelect, toSelect] = selects.map((s) => s.findComponent(NSelect));
     expect(fromSelect.props("value")).toBe("acc-cash");
@@ -151,7 +141,6 @@ describe("记一笔借贷入口完整链路（issue #374）", () => {
     expect(wrapper.findComponent(NModal).props("title")).toBe("记一笔 · 借出");
     const form = wrapper.findComponent(TransactionForm).findComponent(LendingForm);
 
-    // 账户过滤：转出侧只有资金账户，转入侧只有 receivable 账户（经内层 NSelect 读声明 prop）
     const selects = form.findAllComponents(PinyinSelect);
     const [fromSelect, toSelect] = selects.map((s) => s.findComponent(NSelect));
     const fromOptions = fromSelect.props("options") as Array<{ value: string }>;
@@ -159,12 +148,10 @@ describe("记一笔借贷入口完整链路（issue #374）", () => {
     expect(fromOptions.map((o) => o.value)).toEqual(["acc-cash", "acc-bank"]);
     expect(toOptions.map((o) => o.value)).toEqual(["acc-recv-zhang"]);
 
-    // 填表提交
     fromSelect.vm.$emit("update:value", "acc-cash");
     toSelect.vm.$emit("update:value", "acc-recv-zhang");
     form.find('input[placeholder="金额"]').setValue("1000");
     await flushPromises();
-    // 参考命令兜底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
     const base = mockInvoke.getMockImplementation()!;
     mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
       cmd === "create_transaction" ? Promise.resolve("new-id") : base(cmd, args),
@@ -173,7 +160,6 @@ describe("记一笔借贷入口完整链路（issue #374）", () => {
     await submitBtn.trigger("click");
     await flushPromises();
 
-    // 写入命令与转账相同：kind=transfer + 方向即双账户填法
     const createCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "create_transaction");
     expect(createCalls).toHaveLength(1);
     const [, args] = createCalls[0] as [string, { input: Record<string, unknown> }];
@@ -199,13 +185,10 @@ describe("记一笔借贷入口完整链路（issue #374）", () => {
     expect(toOptions.map((o) => o.value)).toEqual(["acc-cash", "acc-bank"]);
   });
 
-  // 借贷可关联商户（issue #875 / ADR-0092）：借出/借入表单暴露商户输入位（与支出表单
-  // 同款自由文本即建）；普通转账表单不暴露（另测于 TransferForm.test）。
   it("「借出」入口暴露商户输入位：自由文本提交即建商户并携带 id", async () => {
     const wrapper = await mountView();
     await openLendModal(wrapper, "借出");
     const form = wrapper.findComponent(TransactionForm).findComponent(LendingForm);
-    // 三个 PinyinSelect：转出、转入、商户（新增输入位）
     const selects = form.findAllComponents(PinyinSelect);
     expect(selects).toHaveLength(3);
     expect(form.text()).toContain("商户");
@@ -217,8 +200,6 @@ describe("记一笔借贷入口完整链路（issue #374）", () => {
     await flushPromises();
 
     const base = mockInvoke.getMockImplementation()!;
-    // 一次性覆盖按调用序排队（先 create_merchant、后 create_transaction），
-    // 其余命令委托回基础桩（守门规则：不手写 invoke 分发）
     mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
       cmd === "create_merchant" ? Promise.resolve("mch-new") : base(cmd, args),
     );
@@ -229,7 +210,6 @@ describe("记一笔借贷入口完整链路（issue #374）", () => {
     await submitBtn.trigger("click");
     await flushPromises();
 
-    // 未命中即建：商户名进 create_merchant，交易携带解析出的 id
     expect(mockInvoke).toHaveBeenCalledWith("create_merchant", { input: { name: "魏有鼎" } });
     const createCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "create_transaction");
     expect(createCalls).toHaveLength(1);
@@ -272,7 +252,6 @@ describe("借贷金额字段错误态（ADR-0058 / issue #416，共享接缝装�
     await amountInput(form).setValue("4.30发");
     expect(hasErrorStatus(form)).toBe(true);
     expect(submitButton(form, "记借出").attributes("disabled")).toBeDefined();
-    // 非法文本原样保留（不拦截不静默丢弃）
     expect((amountInput(form).element as HTMLInputElement).value).toBe("4.30发");
   });
 

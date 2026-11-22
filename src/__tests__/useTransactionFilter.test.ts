@@ -20,7 +20,6 @@ import type {
 } from "@ledger/types";
 import { TRANSACTION_KINDS } from "@ledger/types";
 
-/** URL 下钻用参考数据：两账户；商户含一软删、分类含一软删（历史交易口径，issue #191/#377 校验含软删）。 */
 const urlAccounts: Account[] = [
   {
     id: "acc-1",
@@ -99,9 +98,6 @@ const urlCategories: Category[] = [
 ];
 
 beforeEach(() => {
-  // Reference Data store 用真实动作（createTestingPinia stubActions:false，ADR-0030 决策 7）：
-  // 模块内部消费 store（#234），就绪补判走真实 status 时序，数据由 invoke mock 提供。
-  // URL 下钻用参考数据（issue #725 共享助手）：只覆写本模块行使的三张表
   wireInvokeSeam({
     overrides: {
       list_accounts: urlAccounts,
@@ -111,9 +107,6 @@ beforeEach(() => {
   });
 });
 
-/** 消费契约镜像（ADR-0030 决策 6）：模块只产出状态与版本信号，请求发起归调用方——
- * 调用方监听 refreshVersion，bump 即以当前模块状态装配请求参数。记录每次实际发生的
- * 请求，供「意图 → 状态终态与请求参数」断言；同步多次 bump 被 watcher 去重为一次请求。 */
 let harness: { tf: UseTransactionFilterReturn; requests: TransactionListFilter[] } | null = null;
 
 const FilterHarness = defineComponent({
@@ -126,10 +119,8 @@ const FilterHarness = defineComponent({
       if (tf.filters.dateTo) f.to = tf.filters.dateTo;
       if (tf.filters.involvingAccountId) f.involving_account_id = tf.filters.involvingAccountId;
       if (tf.filters.merchantId) f.merchant_id = tf.filters.merchantId;
-      // 分类维度三态装配（issue #377，与视图 load 同构）：哨兵 → 仅无分类，其余非空值 → 精确 id
       if (tf.filters.categoryId === UNCATEGORIZED_ONLY) f.uncategorized_only = true;
       else if (tf.filters.categoryId) f.category_id = tf.filters.categoryId;
-      // 类型维度（手动多选 + 下钻共用，spec #1025，与视图 load 同构）：非空集合 → kinds 数组（浅拷贝脱只读）
       if (tf.filters.kinds?.length) f.kinds = [...tf.filters.kinds];
       requests.push(f);
     });
@@ -145,9 +136,6 @@ function mountHarness() {
   return { wrapper, ...harness! };
 }
 
-/** 会话内保留组挂载（issue #893）：用全局 active pinia（全局壳层每测新建，报表页保留
- * 测试同款形态）——同一测试内先挂后挂共享同一会话，「卸载重挂」才表达「同一会话内
- * 离开再回来」；新 pinia 表达冷启动。 */
 function mountSessionHarness() {
   const wrapper = mount(FilterHarness);
   return { wrapper: wrapper as VueWrapper, ...harness! };
@@ -180,7 +168,7 @@ describe("useTransactionFilter setFilter（手动过滤意图）", () => {
   it("单维度意图：状态终态生效 + 翻页归零 + 一次重拉（请求参数含该维度）", async () => {
     const { tf, requests } = mountHarness();
     await flushPromises();
-    tf.page.value = 3; // 已翻页背景下声明意图 → 必须翻回第 1 页
+    tf.page.value = 3;
     tf.setFilter({ kinds: ["income"] });
     await flushPromises();
     expect(tf.filters.kinds).toEqual(["income"]);
@@ -226,7 +214,6 @@ describe("useTransactionFilter setFilter（手动过滤意图）", () => {
     tf.setFilter({ kinds });
     await flushPromises();
     expect(requests).toHaveLength(1);
-    // 再次声明同值意图（同一数组实例）→ 无变化即无出口
     tf.setFilter({ kinds });
     await flushPromises();
     expect(requests).toHaveLength(1);
@@ -281,7 +268,6 @@ describe("useTransactionFilter setFilter（手动过滤意图）", () => {
       categoryId: "cat-1",
       kinds: ["transfer"],
     });
-    // 同一同步批次内的多次 bump 被 watcher 去重，最终以完整过滤状态重拉一次
     expect(requests).toHaveLength(1);
     expect(lastRequest()).toEqual({
       page: 1,
@@ -314,7 +300,7 @@ describe("useTransactionFilter resetFilters（清除筛选）", () => {
       kinds: null,
     });
     expect(tf.page.value).toBe(1);
-    expect(requests).toHaveLength(2); // setFilter 一次 + resetFilters 一次
+    expect(requests).toHaveLength(2);
     expect(lastRequest()).toEqual({ page: 1, page_size: 20 });
   });
 
@@ -361,7 +347,6 @@ describe("useTransactionFilter 分页所有权", () => {
     tf.pageSize.value = 50;
     tf.refresh();
     await flushPromises();
-    // 过滤维度归模块状态所有，页大小切换不触碰 → 请求同时携带新页大小与既有过滤
     expect(lastRequest()).toEqual({ page: 1, page_size: 50, involving_account_id: "acc-1" });
   });
 
@@ -375,16 +360,12 @@ describe("useTransactionFilter 分页所有权", () => {
     tf.page.value = 2;
     await flushPromises();
     expect(tf.page.value).toBe(2);
-    // 组合不变量：翻页直写只动页码，过滤状态原样保留，调用方重拉即同时携带两者
     expect(tf.filters.involvingAccountId).toBe("acc-1");
     expect(tf.filters.kinds).toEqual(["income"]);
     expect(tf.refreshVersion.value).toBe(versionAfterFilter);
     expect(requests.length).toBe(requestsAfterFilter);
   });
 });
-
-// —— 页码回退入口（ADR-0045，删除路径）：声明「删除当前页一行后本页剩 N 条」——
-// N 为 0 且非第一页时减一页，然后一律版本 bump；不走 refresh 的「翻回第一页」语义。
 
 describe("useTransactionFilter 页码回退入口（删除路径）", () => {
   it("本页删后剩 0 条且非第一页：回退一页 + 一次重拉（请求以回退后页码与既有筛选发起）", async () => {
@@ -396,7 +377,7 @@ describe("useTransactionFilter 页码回退入口（删除路径）", () => {
     tf.afterRowDelete(0);
     await flushPromises();
     expect(tf.page.value).toBe(2);
-    expect(requests).toHaveLength(2); // setFilter 一次 + 回退入口一次
+    expect(requests).toHaveLength(2);
     expect(lastRequest()).toEqual({ page: 2, page_size: 20, involving_account_id: "acc-1" });
   });
 
@@ -435,15 +416,11 @@ describe("useTransactionFilter 工厂形态（issue #893 起状态住交易页�
   });
 });
 
-// —— URL 下钻参数表（issue #234）：解析、校验、复位规则、就绪补判与字段级让位内化于模块 ——
-// 视图仅把 route query 变化递给模块（syncUrlQuery）；以下用例打模块接口，
-// query 以普通对象递入（与 vue-router LocationQuery 结构兼容，非字符串值视为不在场）。
-
 describe("useTransactionFilter URL 参数表·解析与校验（参考数据已就绪）", () => {
   it("账户直达：有效 account 参数立即校验应用，走统一出口（翻页归零 + 一次重拉）", async () => {
     const { tf, requests } = mountHarness();
     await flushPromises();
-    tf.page.value = 3; // 已翻页背景下下钻 → 必须翻回第 1 页
+    tf.page.value = 3;
     tf.syncUrlQuery({ account: "acc-1" });
     await flushPromises();
     expect(tf.filters.involvingAccountId).toBe("acc-1");
@@ -455,7 +432,7 @@ describe("useTransactionFilter URL 参数表·解析与校验（参考数据已�
   it("商户直达：在用与软删商户均有效（历史交易口径，issue #191）", async () => {
     const { tf } = mountHarness();
     await flushPromises();
-    tf.syncUrlQuery({ merchant: "mch-2" }); // mch-2 为软删商户
+    tf.syncUrlQuery({ merchant: "mch-2" });
     await flushPromises();
     expect(tf.filters.merchantId).toBe("mch-2");
     expect(lastRequest()).toEqual({ page: 1, page_size: 20, merchant_id: "mch-2" });
@@ -535,7 +512,6 @@ describe("useTransactionFilter URL 参数表·解析与校验（参考数据已�
     await flushPromises();
     tf.setFilter({ dateFrom: "2026-01-01" });
     await flushPromises();
-    // 无关导航替换 query 对象，account 值未变 → 该维度不动作
     tf.syncUrlQuery({ account: "acc-1", unrelated: "x" });
     await flushPromises();
     expect(tf.filters.involvingAccountId).toBe("acc-1");
@@ -585,7 +561,6 @@ describe("useTransactionFilter URL 参数表·复位规则（#96 决策 3）", (
     await flushPromises();
     tf.setFilter({ dateFrom: "2026-01-01", kinds: ["income"] });
     await flushPromises();
-    // 导航清除 account 参数（merchant 仍在场）
     tf.syncUrlQuery({ merchant: "mch-1" });
     await flushPromises();
     expect(tf.filters.involvingAccountId).toBeNull();
@@ -633,10 +608,6 @@ describe("useTransactionFilter URL 参数表·复位规则（#96 决策 3）", (
   });
 });
 
-// —— 分类维度（issue #377）：URL ?category= 下钻，合法 id 精确过滤、保留值表示仅无分类、
-// 非法/未知回退不过滤；校验映射含软删分类（历史交易口径，先例商户）；
-// 挂起补判/让位/导航清除与账户/商户维度同规则。
-
 describe("useTransactionFilter URL 参数表·分类维度（issue #377）", () => {
   it("合法分类 id：精确过滤应用（请求携带 category_id，翻页归零 + 一次重拉）", async () => {
     const { tf, requests } = mountHarness();
@@ -662,7 +633,7 @@ describe("useTransactionFilter URL 参数表·分类维度（issue #377）", () 
   it("软删分类 id 有效（历史交易口径）：校验应用不回退", async () => {
     const { tf } = mountHarness();
     await flushPromises();
-    tf.syncUrlQuery({ category: "cat-2" }); // cat-2 为软删分类
+    tf.syncUrlQuery({ category: "cat-2" });
     await flushPromises();
     expect(tf.filters.categoryId).toBe("cat-2");
     expect(lastRequest()).toEqual({ page: 1, page_size: 20, category_id: "cat-2" });
@@ -754,7 +725,6 @@ describe("useTransactionFilter URL 参数表·分类维度（issue #377）", () 
     await flushPromises();
     tf.syncUrlQuery({ category: UNCATEGORIZED_ONLY, account: "acc-1" });
     await flushPromises();
-    // 分类表未就绪 → status 未 ready → 全部维度统一挂起（不误判为无效）
     expect(tf.filters.categoryId).toBeNull();
     expect(tf.filters.involvingAccountId).toBeNull();
     expect(requests).toHaveLength(0);
@@ -776,11 +746,9 @@ describe("useTransactionFilter URL 参数表·分类维度（issue #377）", () 
     await flushPromises();
     tf.syncUrlQuery({ category: "cat-1" });
     await flushPromises();
-    // 参考数据就绪前，用户手动改动分类维度（与 URL 参数同维度）
     tf.setFilter({ categoryId: UNCATEGORIZED_ONLY });
     release();
     await flushPromises();
-    // 分类维度让位：保持手动改动；之后参考数据重拉不重放
     expect(tf.filters.categoryId).toBe(UNCATEGORIZED_ONLY);
     await useReferenceStore().refresh();
     await flushPromises();
@@ -866,7 +834,6 @@ describe("useTransactionFilter URL 参数表·日期维度（issue #380）", () 
     await flushPromises();
     tf.syncUrlQuery({ category: "cat-1", dateFrom: "2026-01-01", dateTo: "2026-12-31" });
     await flushPromises();
-    // 参考数据未就绪 → 全部维度统一挂起（同批次应用，列表只刷一次）
     expect(tf.filters.categoryId).toBeNull();
     expect(tf.filters.dateFrom).toBeNull();
     expect(requests).toHaveLength(0);
@@ -893,7 +860,6 @@ describe("useTransactionFilter URL 参数表·日期维度（issue #380）", () 
     tf.setFilter({ dateFrom: "2025-06-01", dateTo: "2025-06-30" });
     release();
     await flushPromises();
-    // 日期让位：保持手动改动；分类维度照常补判应用
     expect(tf.filters.dateFrom).toBe("2025-06-01");
     expect(tf.filters.dateTo).toBe("2025-06-30");
     expect(tf.filters.categoryId).toBe("cat-1");
@@ -906,7 +872,6 @@ describe("useTransactionFilter URL 参数表·日期维度（issue #380）", () 
     await flushPromises();
     tf.setFilter({ dateFrom: "2026-01-01", kinds: ["income"] });
     await flushPromises();
-    // 导航清除 account 且 dateFrom 变为非法：全部下钻参数均无效 → 复位日期/类型
     tf.syncUrlQuery({ dateFrom: "not-a-date" });
     await flushPromises();
     expect(tf.filters.involvingAccountId).toBeNull();
@@ -915,11 +880,6 @@ describe("useTransactionFilter URL 参数表·日期维度（issue #380）", () 
     expect(lastRequest()).toEqual({ page: 1, page_size: 20 });
   });
 });
-
-// —— 类型维度（spec #1025 单维化，原 issue #581）：URL ?kinds= 逗号分隔闭集字面量；无参考数据
-// 映射、不涉保留值，挂起补判/让位/复位守卫与既有维度同规。手动多选与下钻载荷共用同一维度，
-// 载荷在场即覆盖手动多选（URL 永远赢）；与「仅无分类」解耦：仅无分类命中一切无分类交易、
-// 不限定类型。
 
 describe("useTransactionFilter URL 参数表·类型维度（手动多选 + 下钻共用，spec #1025）", () => {
   it("合法集合：应用（请求携带 kinds 数组），翻页归零 + 一次重拉", async () => {
@@ -1017,7 +977,6 @@ describe("useTransactionFilter URL 参数表·类型维度（手动多选 + 下�
     tf.setFilter({ kinds: ["income"] });
     await flushPromises();
     expect(tf.filters.kinds).toEqual(["income"]);
-    // 同值重递（无关导航替换 query 对象）→ 该维度不动作，手动多选保留
     tf.syncUrlQuery({ kinds: "expense,refund" });
     await flushPromises();
     expect(tf.filters.kinds).toEqual(["income"]);
@@ -1069,22 +1028,15 @@ describe("useTransactionFilter URL 参数表·类型维度（手动多选 + 下�
     await flushPromises();
     tf.syncUrlQuery({ kinds: "expense,refund" });
     await flushPromises();
-    // 参考数据就绪前，用户手动改动同维度
     tf.setFilter({ kinds: ["transfer"] });
     release();
     await flushPromises();
-    // 让位：保持手动改动；之后参考数据重拉不重放
     expect(tf.filters.kinds).toEqual(["transfer"]);
     await useReferenceStore().refresh();
     await flushPromises();
     expect(tf.filters.kinds).toEqual(["transfer"]);
   });
 });
-
-// —— 标的维度已退役（ADR-0135 决策 6 / ADR-0107 决策 3 修订）：交易页 ?instrument=
-// URL 参数从参数表移除——主列表不再含投资行，维度必然落空；持仓下钻改落投资页
-// 明细页签。TransactionListFilter 的 instrument_id 契约字段冻结并存（ADR-0057
-// 遗留参数先例），前端不消费、不携带；清理另走 BREAKING 窗口。
 
 describe("useTransactionFilter URL 参数表·标的维度退役（ADR-0135）", () => {
   const INSTRUMENT_ID = "0197e2c5-9c1e-7def-8a2b-3c4d5e6f7a8b";
@@ -1116,8 +1068,6 @@ describe("useTransactionFilter URL 参数表·标的维度退役（ADR-0135）",
   });
 });
 
-// —— 复位守卫与让位的既有覆盖在标的维度退役后改用同规维度承载 ——
-
 describe("useTransactionFilter URL 参数表·复位守卫（日期维度无效回退）", () => {
   it("dateFrom 非法回退时另一维度（分类）有效在场 → 日期/类型不越界复位", async () => {
     const { tf } = mountHarness();
@@ -1142,11 +1092,9 @@ describe("useTransactionFilter URL 参数表·就绪补判让位（分类维度�
     await flushPromises();
     tf.syncUrlQuery({ category: "cat-1" });
     await flushPromises();
-    // 参考数据就绪前，用户手动改动同维度
     tf.setFilter({ categoryId: "cat-2" });
     release();
     await flushPromises();
-    // 分类维度让位：保持手动改动；之后参考数据重拉不重放
     expect(tf.filters.categoryId).toBe("cat-2");
     await useReferenceStore().refresh();
     await flushPromises();
@@ -1154,7 +1102,6 @@ describe("useTransactionFilter URL 参数表·就绪补判让位（分类维度�
   });
 });
 
-/** 挂起某张参考表响应：模拟冷启动深链时该表晚到；返回放行函数。 */
 function gateReference(gatedCmd: "list_accounts" | "list_merchants" | "list_categories") {
   let release!: () => void;
   const pending = new Promise<Account[] | Merchant[] | Category[]>((res) => {
@@ -1179,7 +1126,6 @@ describe("useTransactionFilter URL 参数表·就绪补判（模块内部消费 
     expect(useReferenceStore().status).toBe("loading");
     tf.syncUrlQuery({ account: "acc-1" });
     await flushPromises();
-    // 挂起：不误判为无效而回退，也不误应用
     expect(tf.filters.involvingAccountId).toBeNull();
     expect(requests).toHaveLength(0);
     release();
@@ -1224,14 +1170,11 @@ describe("useTransactionFilter URL 参数表·就绪补判（模块内部消费 
     await flushPromises();
     first.wrapper.unmount();
 
-    // 同一会话重挂（本次访次无 URL 参数、未手动触碰任何维度）：保留态恢复
     const second = mountSessionHarness();
-    second.tf.syncUrlQuery({}); // 视图 immediate 转发当前无参 query
+    second.tf.syncUrlQuery({});
     await flushPromises();
     expect(second.tf.filters.dateFrom).toBe("2026-01-01");
 
-    // ledger:changed → 参考数据重拉（status ready → loading → ready，迁移工具收尾
-    // 幂等 poke 同款信号）：外部数据变化只重拉，不动筛选、不翻页
     await useReferenceStore().refresh();
     await flushPromises();
     expect(second.tf.filters).toEqual({
@@ -1254,14 +1197,11 @@ describe("useTransactionFilter URL 参数表·字段级让位（issue #234 新�
     await flushPromises();
     tf.syncUrlQuery({ account: "acc-1", merchant: "mch-1" });
     await flushPromises();
-    // 参考数据就绪前，用户手动改动账户维度（与 URL 参数同维度）
     tf.setFilter({ involvingAccountId: "acc-2" });
     release();
     await flushPromises();
-    // 账户维度让位：保持手动改动；商户维度照常补判应用
     expect(tf.filters.involvingAccountId).toBe("acc-2");
     expect(tf.filters.merchantId).toBe("mch-1");
-    // 之后参考数据重拉（status 再次 ready）不重放已让位的参数
     await useReferenceStore().refresh();
     await flushPromises();
     expect(tf.filters.involvingAccountId).toBe("acc-2");
@@ -1274,7 +1214,7 @@ describe("useTransactionFilter URL 参数表·字段级让位（issue #234 新�
     await flushPromises();
     tf.syncUrlQuery({ account: "acc-1" });
     await flushPromises();
-    tf.setFilter({ kinds: ["income"] }); // 制造激活条件，使 resetFilters 实际动作
+    tf.setFilter({ kinds: ["income"] });
     tf.resetFilters();
     release();
     await flushPromises();
@@ -1294,10 +1234,6 @@ describe("useTransactionFilter URL 参数表·字段级让位（issue #234 新�
   });
 });
 
-// —— 会话内保留（issue #893 / ADR-0094，spec #892）：筛选与分页住交易页会话 store ——
-// 只测外部行为：「保留」的判据是同会话卸载重挂（同一 pinia 内重新挂载消费组件）后
-// 状态恢复且以恢复状态重拉；「冷启动」的判据是新 pinia 实例回默认；「零写盘」的判据
-// 是全程无 localStorage 写入（报表页保留测试先例的三锚点，spec #892 测试决策）。
 describe("useTransactionFilter 会话内保留（issue #893）：同会话卸载重挂恢复，新会话冷启动", () => {
   it("筛选全维 + 翻页 + 换页大小后卸载重挂（同一会话）：状态恢复，恢复首刷以恢复状态重拉不翻页", async () => {
     const first = mountSessionHarness();
@@ -1313,7 +1249,6 @@ describe("useTransactionFilter 会话内保留（issue #893）：同会话卸载
     await flushPromises();
     first.wrapper.unmount();
 
-    // 同一会话重挂（侧栏往返/下钻往返/回退）：离开时的选择原样恢复
     const second = mountSessionHarness();
     await flushPromises();
     expect(second.tf.filters).toEqual({
@@ -1326,8 +1261,6 @@ describe("useTransactionFilter 会话内保留（issue #893）：同会话卸载
     });
     expect(second.tf.page.value).toBe(3);
     expect(second.tf.pageSize.value).toBe(50);
-    // 恢复访次的重拉（以恢复状态现拉，不翻页）由消费方首拉承担：视图层锚定
-    // （TransactionsView session-retention 测试）；模块边界只产出状态与版本信号
     second.wrapper.unmount();
   });
 
@@ -1339,7 +1272,6 @@ describe("useTransactionFilter 会话内保留（issue #893）：同会话卸载
     await flushPromises();
     first.wrapper.unmount();
 
-    // 新 pinia = 新会话（应用重启）：回默认
     setActivePinia(createPinia());
     const second = mountSessionHarness();
     await flushPromises();
@@ -1383,13 +1315,10 @@ describe("useTransactionFilter 会话内保留（issue #893）：同会话卸载
     const second = mountSessionHarness();
     second.tf.syncUrlQuery({ account: "acc-1", kinds: "expense,refund" });
     await flushPromises();
-    // URL 参数维度按参数装配（显式跳转意图）；无参数维度保留离开时的选择
     expect(second.tf.filters.involvingAccountId).toBe("acc-1");
     expect(second.tf.filters.merchantId).toBe("mch-1");
-    // 类型维度单维化：下钻载荷在场即覆盖手动多选（URL 永远赢，spec #1025）
     expect(second.tf.filters.kinds).toEqual(["expense", "refund"]);
     expect(second.tf.page.value).toBe(1);
-    // URL 应用走统一出口：一次重拉、参数完整（恢复态的重拉由消费方首拉承担）
     expect(second.requests).toHaveLength(1);
     expect(second.requests[0]).toEqual({
       page: 1,
@@ -1420,7 +1349,7 @@ describe("useTransactionFilter 会话内保留（issue #893）：同会话卸载
   it("URL 参数命中保留态同维度：跨访问的旧手动状态不抗参数（让位守卫仅限单次进入内）", async () => {
     const first = mountSessionHarness();
     await flushPromises();
-    first.tf.setFilter({ involvingAccountId: "acc-2" }); // 上一次访问留下的手动状态
+    first.tf.setFilter({ involvingAccountId: "acc-2" });
     await flushPromises();
     first.wrapper.unmount();
 
@@ -1440,11 +1369,10 @@ describe("useTransactionFilter 会话内保留（issue #893）：同会话卸载
     first.wrapper.unmount();
 
     const second = mountSessionHarness();
-    second.tf.syncUrlQuery({}); // 视图 immediate 转发当前无参 query
+    second.tf.syncUrlQuery({});
     await flushPromises();
     expect(second.tf.filters.involvingAccountId).toBe("acc-1");
     expect(second.tf.page.value).toBe(2);
-    // 无参数：URL 出口不动作，恢复态原样（重拉由消费方首拉承担）
     expect(second.requests).toHaveLength(0);
     second.wrapper.unmount();
   });
@@ -1459,7 +1387,6 @@ describe("useTransactionFilter 会话内保留（issue #893）：同会话卸载
     const second = mountSessionHarness();
     await flushPromises();
     expect(second.tf.page.value).toBe(3);
-    // 复位出口的激活判定含纯翻页偏离：ESC 复位归零 + 重拉
     second.tf.resetFilters();
     await flushPromises();
     expect(second.tf.page.value).toBe(1);
@@ -1474,7 +1401,7 @@ describe("useTransactionFilter 会话内保留（issue #893）：同会话卸载
     first.tf.setFilter({ involvingAccountId: "acc-1", kinds: ["income"] });
     first.tf.page.value = 2;
     await flushPromises();
-    first.tf.resetFilters(); // ESC 复位走模块既有复位出口
+    first.tf.resetFilters();
     await flushPromises();
     expect(first.tf.page.value).toBe(1);
     first.wrapper.unmount();
@@ -1505,7 +1432,7 @@ describe("useTransactionFilter 会话内保留（issue #893）：同会话卸载
     const second = mountSessionHarness();
     await flushPromises();
     expect(second.tf.page.value).toBe(3);
-    second.tf.refresh(); // 记一笔提交等外部数据变化回填
+    second.tf.refresh();
     await flushPromises();
     expect(second.tf.page.value).toBe(1);
     expect(second.tf.filters.involvingAccountId).toBe("acc-1");

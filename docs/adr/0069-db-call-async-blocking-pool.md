@@ -66,3 +66,7 @@ spawn_blocking 不自动携带线程局部上下文，ADR-0009「同步命令与
 - 新增一条隐性约定：异步命令的 SQL 归因依赖 helper 的 span 重建/传播，绕过 helper 直连 `spawn_blocking` 跑 DB 闭包会丢归因——评审时按「触 DB 必经 helper」把关。
 - 保留同步形态的六个命令是不触 DB 的刻意判定而非遗漏（清单见决策 2）；后续给它们加 DB 工作面时须一并 async 化。
 - 零行为回归由既有测试面钉住（BDD e2e + API 集成测试 + helper 纯单测），迁移全程未改一行测试断言。
+
+## 修订注记（#2204 决策记录并入，2026-11-21）：持锁时长探针的作业类别预算自 crate 注记并入
+
+决策 4 修订（#1276）的持锁时长探针按作业类别分档：默认阈值 1 秒（远大于合法单事务、远小于分钟级同步）不变之外，重作业类别可登记更长预算——备份 / 恢复在连接锁内做 `VACUUM INTO` 全库拷贝 + zip 压缩的本地文件 IO，大库实测数秒（2.8s，#1765 现场观察），是合法重作业，不属于「分钟级网络往返不得进锁」的约束对象。预算覆盖备份域命令（`backup.` 前缀）与锁内做备份 / 恢复文件 IO 的壳层命令（`create_backup` / `restore_backup` / `get_backup_meta` / `list_backups`），由壳层启动时接线到基础设施登记点（`register_lock_hold_budget`，ADR-0112 决策 5 反转形态；备份域 `LOCK_HOLD_BUDGET` 30 秒）。出处：ledger-backup crate 根文档持锁预算注记。

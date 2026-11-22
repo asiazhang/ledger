@@ -81,7 +81,6 @@ const mockCategories: Category[] = [
     is_deleted: false,
   },
   {
-    // 软删分类（issue #2187）：历史交易口径——不进在用字典，路径缓存保留历史路径
     id: "cat-del",
     name: "旅游",
     kind: "expense",
@@ -134,7 +133,6 @@ const mockInsurers: Insurer[] = [
   },
 ];
 
-// 参考命令桩统一走接缝（issue #725）；本文件以自身夹具为被测数据，全量覆写。
 function mockListCommands() {
   wireInvokeSeam({
     overrides: {
@@ -151,11 +149,6 @@ beforeEach(() => {
   mockListCommands();
 });
 
-/**
- * 机制断言（self-init / SWR / 在途合并 / 事件重拉 / status-version / 失败与恢复）
- * 已收口到 push-first-list.test.ts 工厂单点；事件重拉的端到端域规则
- * （失效机制唯一，ADR-0012）由 reference-push.integration.test.ts 保留店级钉死。
- */
 describe("useReferenceStore", () => {
   it("初始状态为空", () => {
     const store = useReferenceStore();
@@ -172,7 +165,6 @@ describe("useReferenceStore", () => {
     await store.refresh();
     expect(store.currencies).toEqual(mockCurrencies);
     expect(store.accounts).toEqual(mockAccounts);
-    // 含软删全量拉取按 is_deleted 拆分：在用字典只含在用行（软删进 deletedCategories 内部缓存）
     expect(store.categories.map((c) => c.id)).toEqual(["cat-root", "cat-child", "cat-income"]);
     expect(store.merchants).toEqual(mockMerchants);
     expect(store.insurers.map((i) => i.id)).toEqual(["ins-1"]);
@@ -194,7 +186,6 @@ describe("useReferenceStore", () => {
     await store.refresh();
     expect(store.insurers.map((i) => i.id)).toEqual(["ins-1"]);
 
-    // 平安人寿被软删：后端含已删列表返回 is_deleted=true 行
     wireInvokeSeam({
       overrides: {
         list_currencies: mockCurrencies,
@@ -231,9 +222,7 @@ describe("useReferenceStore", () => {
     });
     const store = useReferenceStore();
     await store.refresh();
-    // 谓词单点语义（词汇表 RealizedPnl 词条）：隐藏 ≠ 软删，隐藏投资账户保留
     expect(store.investmentAccounts.map((a) => a.id)).toEqual(["acc-inv", "acc-inv-hidden"]);
-    // 候选面投影与谓词同源同处：label 拼法或候选收窄（#1828 类调整）一处生效
     expect(store.investmentAccountOptions).toEqual([
       { label: "证券账户", value: "acc-inv" },
       { label: "隐藏证券户", value: "acc-inv-hidden" },
@@ -256,10 +245,7 @@ describe("useReferenceStore", () => {
     });
     const store = useReferenceStore();
     await store.refresh();
-    // 归档不是删除：store 不做任何归档过滤（排除只发生在前端选项构造层，#1954），
-    // 否则名称映射与历史下钻断链
     expect(store.accounts.map((a) => a.id)).toEqual(["acc-1", "acc-2", "acc-archived"]);
-    // 名称映射（AccountLink / 计划行回退名）照常拿到归档账户，标志随行披露
     expect(store.accountMap.get("acc-archived")?.name).toBe("借出·张三");
     expect(store.accountMap.get("acc-archived")?.is_archived).toBe(true);
     expect(store.accountMap.get("acc-1")?.is_archived).toBe(false);
@@ -283,7 +269,6 @@ describe("useReferenceStore", () => {
     });
     const store = useReferenceStore();
     await store.refresh();
-    // 排除只发生在选项构造层：账户字典与名称映射仍是全量（历史可读、可下钻）
     expect(store.accounts.map((a) => a.id)).toEqual([
       "acc-1",
       "acc-2",
@@ -292,19 +277,16 @@ describe("useReferenceStore", () => {
       "acc-inv-archived",
     ]);
     expect(store.accountMap.get("acc-recv-archived")?.name).toBe("借出·张三");
-    // 可选择账户 = 去归档（读口径谓词 investmentAccounts 不动，选项面另有变体）
     expect(store.selectableAccounts.map((a) => a.id)).toEqual(["acc-1", "acc-2", "acc-inv"]);
     expect(store.selectableAccountOptions).toEqual([
       { label: "现金", value: "acc-1" },
       { label: "招商银行", value: "acc-2" },
       { label: "证券账户", value: "acc-inv" },
     ]);
-    // 投资账户下拉候选面同样排除归档（#1830 投影 + 归档收纳），读口径 investmentAccounts 不变
     expect(store.investmentAccounts.map((a) => a.id)).toEqual(["acc-inv", "acc-inv-archived"]);
     expect(store.selectableInvestmentAccountOptions).toEqual([
       { label: "证券账户", value: "acc-inv" },
     ]);
-    // 出资账户候选单一谓词派生亦排除归档（唯一消费者是投资录入表单的选项面）
     expect(store.fundingCandidateAccounts.map((a) => a.id)).toEqual(["acc-1", "acc-2"]);
   });
 
@@ -317,8 +299,7 @@ describe("useReferenceStore", () => {
 
   it("保司字典接入（issue #713 / ADR-0082）：在用进字典与按名查找，含已删全量拉取，insurerMap 含软删行", async () => {
     const store = useReferenceStore();
-    await store.refresh(); // 等 self-init 完成（避免与在途加载合并去重）
-    // 保司拉取以含已删全量（同商户先例：在用进字典，软删进显示映射）
+    await store.refresh();
     wireInvokeSeam({
       overrides: {
         list_currencies: mockCurrencies,
@@ -351,7 +332,6 @@ describe("useReferenceStore", () => {
     for (const [, args] of insurerCalls) {
       expect(args).toMatchObject({ includeDeleted: true });
     }
-    // 在用：进字典、进按名查找；软删：只进显示映射（存量保单保司列照常显示）
     expect(store.insurers.map((i) => i.id)).toEqual(["ins-1"]);
     expect(store.insurerByName.get("平安人寿")?.id).toBe("ins-1");
     expect(store.insurerByName.get("海峡金桥")).toBeUndefined();
@@ -374,7 +354,6 @@ describe("useReferenceStore", () => {
     await store.refresh();
     expect(store.merchantMap.get("mch-1")?.name).toBe("京东");
 
-    // 京东被软删：后端含软删列表返回 is_deleted=true 行，其余表不变
     wireInvokeSeam({
       overrides: {
         list_currencies: mockCurrencies,
@@ -386,10 +365,8 @@ describe("useReferenceStore", () => {
     });
     await store.refresh();
 
-    // 选择列表（merchants / merchantByName）不含软删商户
     expect(store.merchants.map((m) => m.id)).toEqual(["mch-2"]);
     expect(store.merchantByName.get("京东")).toBeUndefined();
-    // 显示映射仍保留软删商户（历史交易照常显示商户名）
     expect(store.merchantMap.get("mch-1")?.name).toBe("京东");
     expect(store.merchantMap.get("mch-2")?.name).toBe("红旗连锁");
   });
@@ -409,8 +386,6 @@ describe("useReferenceStore", () => {
     expect(store.categoryPath("cat-child")).toBe("餐饮 > 外卖");
     expect(store.categoryPath("cat-root")).toBe("餐饮");
     expect(store.categoryPath(null)).toBe("");
-    // 未知标识回空串（调用方兜底，口径不变）；软删分类保留历史路径（历史交易口径，
-    // issue #2187：在用字典不含软删，路径缓存由含软删全量字典派生）
     expect(store.categoryPath("cat-gone")).toBe("");
     expect(store.categoryPath("cat-del")).toBe("餐饮 > 旅游");
     const expenseTree = store.treeCategoryOptions("expense");
@@ -424,7 +399,6 @@ describe("useReferenceStore", () => {
     await store.refresh();
     expect(store.categoryPath("cat-child")).toBe("餐饮 > 外卖");
 
-    // 重命名：失效重拉（ledger:changed 触发的 refresh 同一出口）后新路径即时生效
     wireInvokeSeam({
       overrides: {
         list_currencies: mockCurrencies,
@@ -441,7 +415,6 @@ describe("useReferenceStore", () => {
     await store.refresh();
     expect(store.categoryPath("cat-child")).toBe("餐饮 > 快餐");
 
-    // 软删：从在用字典消失，路径缓存保留历史路径
     wireInvokeSeam({
       overrides: {
         list_currencies: mockCurrencies,
@@ -467,7 +440,6 @@ describe("useReferenceStore", () => {
     await store.refresh();
     expect(store.categoryDisplayName("cat-child", "未分类")).toBe("餐饮 > 外卖");
     expect(store.categoryDisplayName("cat-root", "未分类")).toBe("餐饮");
-    // 孤儿引用（分类已删）与空 id：回退调用方提供的后端兜底名，不抛错
     expect(store.categoryDisplayName("cat-gone", "未分类")).toBe("未分类");
     expect(store.categoryDisplayName(null, "未分类")).toBe("未分类");
   });
@@ -475,7 +447,6 @@ describe("useReferenceStore", () => {
   it("getCurrency 按 code 返回币种", async () => {
     const store = useReferenceStore();
     await store.refresh();
-    // 返回种子里对应 code 的那行币种（含 symbol/小数位全字段，store 克隆后深等），非格式断言
     expect(store.getCurrency("CNY")).toStrictEqual(mockCurrencies[0]);
     expect(store.getCurrency("EUR")).toBeUndefined();
   });

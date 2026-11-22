@@ -1,14 +1,9 @@
-//! `policy` 域单元测试：建档校验语义、软删保留与失效信号回调
-//! （BDD 场景外的快速反馈；外部可观察行为的验收在 BDD `policies.feature`）。
-
 use rusqlite::Connection;
 
 use super::model::PolicyInput;
 use crate::{create_insurer, create_policy, delete_policy, list_policies, update_policy};
 
 fn conn() -> Connection {
-    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）；
-    // 工厂住根包，经 dev-dependency 测试环消费（#1100，ledger-transaction 同款）。
     tauri_app_lib::test_support::open()
 }
 
@@ -49,7 +44,6 @@ fn 创建保单并读回全字段() {
     assert_eq!(policy.end_date.as_deref(), Some("2036-01-01"));
     assert_eq!(policy.coverage_amount_cents, Some(30_000_000));
     assert_eq!(policy.coverage_currency_code.as_deref(), Some("CNY"));
-    // 备注 trim 后保留；审计字段齐全
     assert_eq!(policy.note.as_deref(), Some("50 万保额"));
     assert!(!policy.created_at.is_empty());
     assert_eq!(policy.version, 1);
@@ -63,7 +57,6 @@ fn 止日为空建档成功且保额币种成对存空() {
     let mut input = input(&insurer_id);
     input.end_date = None;
     input.coverage_amount_cents = None;
-    // 保额缺省时币种忽略存空（成对原子）
     input.coverage_currency_code = Some("USD".into());
     input.note = Some("   ".into());
     create_ok(&conn, input);
@@ -126,7 +119,6 @@ fn 软删后不进列表且库内行引用保留不置空() {
     delete_policy(&conn, &id, &mut || {}).unwrap();
 
     assert!(list_policies(&conn).unwrap().is_empty());
-    // 库内行保留：is_deleted=1，保司引用等列原样（历史引用保留不置空，ADR-0051 决策 5）
     let (is_deleted, kept_insurer, kept_number): (i64, String, String) = conn
         .query_row(
             "SELECT is_deleted, insurer_id, policy_number FROM policies WHERE id=?1",
@@ -157,14 +149,12 @@ fn 编辑时保司未变_软删保司维持历史引用可继续编辑() {
     let conn = conn();
     let insurer_id = seed_insurer(&conn, "平安保险");
     let id = create_ok(&conn, input(&insurer_id));
-    // 建档后保司被软删：未换保司的编辑 = 维持历史引用（同 Writer 接缝语义）
     crate::delete_insurer(&conn, &insurer_id).unwrap();
     let mut keep_input = input(&insurer_id);
     keep_input.product_name = "医疗险".into();
     update_policy(&conn, &id, keep_input, &mut || {}).unwrap();
     assert_eq!(list_policies(&conn).unwrap()[0].product_name, "医疗险");
 
-    // 换成另一个软删保司 = 新档案选择，仍被拒
     let insurer2 = seed_insurer(&conn, "已退保保司");
     crate::delete_insurer(&conn, &insurer2).unwrap();
     let mut switch_input = input(&insurer2);
@@ -258,18 +248,12 @@ fn 软删保司不可再被新档案选择() {
     assert!(err.to_string().contains("保险公司不存在或已删除"));
 }
 
-// ---------------------------------------------------------------------------
-// 保单视角统计（issue #363）：实时推导、不落库（BDD 场景外的快速反馈；
-// 含协议期次的下期扣款日推导由 BDD `policy_stats.feature` 验收）
-// ---------------------------------------------------------------------------
-
 use crate::policy_stats;
 use ledger_transaction::TransactionInput;
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::create_transaction_internal;
 
 fn insert_account(conn: &Connection, id: &str) {
-    // 统计世界脚手架账户：工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）。
     tauri_app_lib::test_support::seed_account(conn, id, id, "cash", "CNY", 0);
 }
 
@@ -323,7 +307,6 @@ fn 统计_挂单保费与流入实时合计且软删流水不计入() {
     let policy_id = create_ok(&conn, input(&insurer_id));
 
     let tx = |kind, amount, date| linked_input("acc-stat", kind, amount, date, &policy_id);
-    // 三笔保费（其中一笔后软删）+ 一笔理赔款 + 一笔不挂单支出（不得串入）
     let removed =
         create_transaction_internal(&conn, tx(TransactionKind::Expense, 100, "2026-01-01"))
             .unwrap()
@@ -342,7 +325,6 @@ fn 统计_挂单保费与流入实时合计且软删流水不计入() {
     assert_eq!(stats.len(), 1);
     let s = &stats[0];
     assert_eq!(s.policy_id, policy_id);
-    // 逐笔可对账：软删的 100 不计入，余 300；流入 50
     assert_eq!(s.total_paid_native_cents, 300);
     assert_eq!(s.total_inflow_native_cents, 50);
     assert_eq!(s.native_currency, "CNY");
@@ -384,7 +366,6 @@ fn 统计_到期态由止日与today推导() {
         !by_number("P-LIFETIME").is_expired,
         "止日空 = 长期/终身，永不判到期"
     );
-    // 边界：止日 == today 按「早于今天」严格判定 → 保障中
     assert!(!by_number("P-TODAY").is_expired, "止日为 today 不算已到期");
 }
 
@@ -399,7 +380,6 @@ fn 统计_软删保单不产生统计行且不串其他保单() {
         i.policy_number = "P-DELETED".into();
         create_ok(&conn, i)
     };
-    // 已删保单的挂单流水保留原引用（不置空），但不得串入其他保单统计
     create_transaction_internal(
         &conn,
         linked_input(
@@ -430,20 +410,9 @@ fn 统计_软删保单不产生统计行且不串其他保单() {
     assert_eq!(stats[0].total_paid_native_cents, 111, "已删保单流水不串入");
 }
 
-// ---------------------------------------------------------------------------
-// 读快照一致性探针（issue #1702）：写提交落在语句之间时，同屏口径必须仍互相
-// 自洽。探针机制见 `tauri_app_lib::test_support::snapshot_probe`。
-// ---------------------------------------------------------------------------
-
 use tauri_app_lib::test_support::snapshot_probe::{self, InjectionOutcome};
 use tauri_app_lib::test_support::{ScratchDir, open_file};
 
-/// 统计的保单行与逐保单合计必须同快照（issue #1702）：保单基础行、保费/流入
-/// 聚合、下期扣款日、本位币是多语句读闭包（两段 join 形态）。探针在保费聚合
-/// 读取开始前于另一连接把挂单流水金额翻倍——
-/// - 读闭包无快照保护（红）：统计相对基线漂移（合计读新、保单行读旧，
-///   「列表有此保单而合计对不上」不同时点）；
-/// - 读闭包收进读事务（绿）：注入写被挡住，行与合计同见一套数。
 #[test]
 fn policy_stats_rows_and_sums_share_one_snapshot() {
     let dir = ScratchDir::new("policy-stats-read-snapshot");
@@ -487,8 +456,6 @@ fn policy_stats_rows_and_sums_share_one_snapshot() {
     );
     assert_eq!(before[0].total_inflow_native_cents, 50);
 
-    // 探针：保费聚合读取（`FROM transactions t JOIN policies p`，位于保单行
-    // 之后、全闭包首次命中）开始前，另一连接提交流水翻倍。
     snapshot_probe::arm(
         &conn,
         dir.path(),

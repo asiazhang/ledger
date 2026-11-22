@@ -10,7 +10,6 @@ import type { TransactionModalRow, TransactionTrade } from "@ledger/types";
 const props = defineProps<{
   kind: "buy" | "sell";
   submitLabel: string;
-  /** 编辑模式（issue #180）：待编辑交易与买卖明细，创建路径不传 */
   editing?: TransactionModalRow | null;
   trade?: TransactionTrade | null;
 }>();

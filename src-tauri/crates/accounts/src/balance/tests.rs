@@ -1,12 +1,6 @@
-//! [`affected_accounts`](super::affected_accounts)「受影响账户」并集口径的直测
-//! （issue #533 / spec #519）。纯函数无数据库环境；形态仿 Writer 接缝按主题
-//! 拆分单测先例：单端、双侧、资金端（funding）、出资子行端（ADR-0138）、旧新重叠、
-//! 去重与首见顺序、空引用，并按创建 / 修改 / 删除三种写入形态覆盖调用面。
-
 use super::affected_accounts;
 use ledger_transaction::seams::balance::RowAccounts;
 
-/// 行引用集构造器（测试速记）：主表三列 + 出资子行端。
 fn row<'a>(
     account_id: &'a str,
     to_account_id: Option<&'a str>,
@@ -21,63 +15,42 @@ fn row<'a>(
     }
 }
 
-// ---------------------------------------------------------------------------
-// 单端：行上只有 account_id 一端（income/expense/refund 等）
-// ---------------------------------------------------------------------------
-
-/// 创建形态（旧行 None）：单端行推导只含转出账户一端。
 #[test]
 fn create_single_sided_row_yields_only_account_id() {
     let affected = affected_accounts(None, Some(row("acc-a", None, None, &[])));
     assert_eq!(affected, vec!["acc-a"]);
 }
 
-/// 删除形态（新行 None）：单端行推导只含原行账户一端。
 #[test]
 fn delete_single_sided_row_yields_only_account_id() {
     let affected = affected_accounts(Some(row("acc-a", None, None, &[])), None);
     assert_eq!(affected, vec!["acc-a"]);
 }
 
-// ---------------------------------------------------------------------------
-// 双侧：transfer 行两端（account_id + to_account_id）
-// ---------------------------------------------------------------------------
-
-/// 创建形态：transfer 双侧都进集合，行内先 account 后 to——与既有创建推导
-/// 顺序一致（接线无行为变化）。
 #[test]
 fn create_transfer_row_yields_both_sides_out_first() {
     let affected = affected_accounts(None, Some(row("acc-out", Some("acc-in"), None, &[])));
     assert_eq!(affected, vec!["acc-out", "acc-in"]);
 }
 
-/// 删除形态：原行 transfer 双侧都进集合。
 #[test]
 fn delete_transfer_row_yields_both_sides() {
     let affected = affected_accounts(Some(row("acc-out", Some("acc-in"), None, &[])), None);
     assert_eq!(affected, vec!["acc-out", "acc-in"]);
 }
 
-// ---------------------------------------------------------------------------
-// 资金端：buy/sell 行 funding_account_id（issue #935 / ADR-0096）
-// ---------------------------------------------------------------------------
-
-/// 创建形态：buy 行单端 account_id + 资金端，推导含两账户——行内先 account
-/// 后 funding（与「先主账户后扩展端」的行内顺序一致）。
 #[test]
 fn create_buy_row_yields_account_and_funding() {
     let affected = affected_accounts(None, Some(row("acc-inv", None, Some("acc-cash"), &[])));
     assert_eq!(affected, vec!["acc-inv", "acc-cash"]);
 }
 
-/// 删除形态：原行 buy 的资金端也进集合（删除要恢复资金账户余额）。
 #[test]
 fn delete_buy_row_yields_account_and_funding() {
     let affected = affected_accounts(Some(row("acc-inv", None, Some("acc-cash"), &[])), None);
     assert_eq!(affected, vec!["acc-inv", "acc-cash"]);
 }
 
-/// 修改形态：buy 换资金账户，旧新并集含两代资金端（旧端恢复、新端计入）。
 #[test]
 fn update_buy_row_funding_move_unions_old_and_new_funding() {
     let affected = affected_accounts(
@@ -87,12 +60,6 @@ fn update_buy_row_funding_move_unions_old_and_new_funding() {
     assert_eq!(affected, vec!["acc-inv", "acc-cash-old", "acc-cash-new"]);
 }
 
-// ---------------------------------------------------------------------------
-// 出资子行端：分解行的 funding_items（issue #1860 / ADR-0138 决策 7）
-// ---------------------------------------------------------------------------
-
-/// 创建形态（分解行）：主表 account_id 为 None（分解行落 NULL），出资子行端
-/// 全部进集合——组合支付每一方都要重算余额。
 #[test]
 fn create_split_funding_row_yields_all_item_accounts() {
     let new = RowAccounts {
@@ -105,7 +72,6 @@ fn create_split_funding_row_yields_all_item_accounts() {
     assert_eq!(affected, vec!["acc-wallet", "acc-balance"]);
 }
 
-/// 删除形态（分解行）：软删要恢复每一出资方余额，子行端全部进集合。
 #[test]
 fn delete_split_funding_row_yields_all_item_accounts() {
     let old = RowAccounts {
@@ -118,8 +84,6 @@ fn delete_split_funding_row_yields_all_item_accounts() {
     assert_eq!(affected, vec!["acc-wallet", "acc-balance"]);
 }
 
-/// 修改形态（单 ⇄ 多互转）：旧单出资端 ∪ 新分解各端——转出方向恢复旧账户、
-/// 计入各新出资账户。
 #[test]
 fn update_single_to_multi_conversion_unions_old_and_new_items() {
     let affected = affected_accounts(
@@ -134,7 +98,6 @@ fn update_single_to_multi_conversion_unions_old_and_new_items() {
     assert_eq!(affected, vec!["acc-old", "acc-wallet", "acc-balance"]);
 }
 
-/// 同一账户多条出资项（定金 + 尾款）：并集去重后只出现一次。
 #[test]
 fn duplicate_item_accounts_collapse() {
     let new = RowAccounts {
@@ -147,7 +110,6 @@ fn duplicate_item_accounts_collapse() {
     assert_eq!(affected, vec!["acc-wallet"]);
 }
 
-/// 行内顺序：主表三端先于出资子行端（先主账户后扩展端，与既有顺序约定一致）。
 #[test]
 fn item_accounts_come_after_main_refs() {
     let new = RowAccounts {
@@ -160,11 +122,6 @@ fn item_accounts_come_after_main_refs() {
     assert_eq!(affected, vec!["acc-main", "acc-cash", "acc-wallet"]);
 }
 
-// ---------------------------------------------------------------------------
-// 旧新重叠：修改形态的旧行 ∪ 新行
-// ---------------------------------------------------------------------------
-
-/// 修改形态：账户未移动时旧新两行完全重叠，去重后各账户只出现一次。
 #[test]
 fn update_without_move_unions_old_and_new_dedup() {
     let affected = affected_accounts(
@@ -174,7 +131,6 @@ fn update_without_move_unions_old_and_new_dedup() {
     assert_eq!(affected, vec!["acc-a", "acc-b"]);
 }
 
-/// 修改形态：跨账户移动（旧新无重叠）时两侧都进集合。
 #[test]
 fn update_with_account_move_unions_both() {
     let affected = affected_accounts(
@@ -184,11 +140,6 @@ fn update_with_account_move_unions_both() {
     assert_eq!(affected, vec!["acc-old", "acc-new"]);
 }
 
-// ---------------------------------------------------------------------------
-// 去重与首见顺序
-// ---------------------------------------------------------------------------
-
-/// 重复引用折叠到首见位置：旧新两端互相重叠（如 swap）不产生重复项。
 #[test]
 fn duplicates_collapse_to_first_occurrence() {
     let affected = affected_accounts(
@@ -198,7 +149,6 @@ fn duplicates_collapse_to_first_occurrence() {
     assert_eq!(affected, vec!["acc-a", "acc-b"]);
 }
 
-/// 首见顺序保持：旧行引用先于新行引用，新行行内先 account 后 to 后 funding。
 #[test]
 fn first_seen_order_preserved_across_old_and_new() {
     let affected = affected_accounts(
@@ -208,11 +158,6 @@ fn first_seen_order_preserved_across_old_and_new() {
     assert_eq!(affected, vec!["acc-a", "acc-c", "acc-b"]);
 }
 
-// ---------------------------------------------------------------------------
-// 空引用
-// ---------------------------------------------------------------------------
-
-/// 两行皆缺（无账户引用可收集）得空集——调用方无需特判。
 #[test]
 fn no_rows_yield_empty_set() {
     assert!(affected_accounts(None, None).is_empty());

@@ -2,8 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useReportsSessionStore } from "@/reports/reports-session";
 
-// 固定「今天」= 2026-01-15（本地）：默认「当年」快照派生随之确定
-//（ReportsView 测试同款前提），期望年份一律用字面量 2026。
 const Y = 2026;
 
 beforeEach(() => {
@@ -74,9 +72,7 @@ describe("useReportsSessionStore（issue #427 报表页会话状态）", () => {
     const store = useReportsSessionStore();
     store.setMerchantTopN(10);
     expect(store.merchantTopN).toBe(10);
-    // 同一 pinia（同一会话）内重新取 store：保留选择
     expect(useReportsSessionStore().merchantTopN).toBe(10);
-    // 新 pinia = 冷启动：回默认
     setActivePinia(createPinia());
     expect(useReportsSessionStore().merchantTopN).toBe(5);
   });

@@ -82,7 +82,6 @@ async fn test_update_transaction_returns_200_and_updates_fields() {
     assert_eq!(updated["id"], id, "应保持同一 id");
     assert_eq!(updated["version"], 2, "修改后版本号应递增");
 
-    // 读回应反映修改。
     let (_, readback) = get_json(&app, "/api/v1/transactions").await;
     let txs = items_of(&readback);
     assert_eq!(txs.len(), 1);
@@ -100,7 +99,6 @@ async fn test_update_transaction_reuses_kind_validation_returns_400() {
     let created = post_batch(&app, batch_body(&[&tx], None)).await;
     let id = created[0]["id"].as_str().unwrap();
 
-    // 改成转账但缺目标账户，应与创建路径一致返回 Invalid。
     let body = format!(
         r#"{{"kind":"transfer","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-02"}}"#
     );
@@ -111,12 +109,9 @@ async fn test_update_transaction_reuses_kind_validation_returns_400() {
     assert!(err["message"].as_str().unwrap().contains("目标账户"));
 }
 
-/// issue #295：修改（全字段替换）把买入改为引用不存在的标的 → 400 Invalid 中文
-/// 错误（此前为扩展表外键违规的 500 数据库错误），原交易行与持仓批次保持不变。
 #[tokio::test]
 async fn test_update_buy_to_missing_instrument_returns_400_with_readable_error() {
     let (app, conn) = setup_app();
-    // 投资铺垫（账户+标的+1:1 汇率）一行建成：工厂组合种子（spec #728 / ADR-0084）。
     test_support::seed_investment_setup(&conn.lock().unwrap(), "acc-inv-295", "inst-295");
 
     let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-295","date":"2026-01-10","instrument_id":"inst-295","quantity":10.0,"price_cents":1000000,"fee_cents":0}]}"#;
@@ -124,7 +119,6 @@ async fn test_update_buy_to_missing_instrument_returns_400_with_readable_error()
     assert_eq!(created[0]["success"], true, "铺垫买入应成功");
     let id = created[0]["id"].as_str().unwrap().to_string();
 
-    // 改为引用不存在的标的 → 400（非 500），错误可读、携带标的 id。
     let body = r#"{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-295","date":"2026-01-10","instrument_id":"inst-not-exist","quantity":5.0,"price_cents":1200000,"fee_cents":0}"#;
     let (status, bytes) = put_transaction_via_api(&app, &id, body).await;
     assert_eq!(
@@ -139,7 +133,6 @@ async fn test_update_buy_to_missing_instrument_returns_400_with_readable_error()
         "应报买入标的不存在供回自纠: {err}"
     );
 
-    // 原交易行与持仓批次保持原样（入口自持事务整体回滚）。
     let conn = conn.lock().unwrap();
     let (amount_cents, quantity): (i64, f64) = conn
         .query_row(
@@ -163,14 +156,12 @@ async fn test_update_transaction_preserves_idempotency_key_and_rerun_dedup() {
     let created = post_batch(&app, body).await;
     let id = created[0]["id"].as_str().unwrap();
 
-    // 编辑内容但请求体不含 idempotency_key（幂等键不可编辑）。
     let edit_body = format!(
         r#"{{"kind":"income","amount_cents":2000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-03"}}"#
     );
     let (status, _) = put_transaction_via_api(&app, id, &edit_body).await;
     assert_eq!(status, StatusCode::OK);
 
-    // 编辑后重跑同批导入（同键）仍去重且返回已有 id → 不产生重复。
     let rerun_body = format!(
         r#"{{"transactions":[{{"kind":"income","amount_cents":3000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-05","idempotency_key":"file:1:1"}}]}}"#
     );
@@ -187,21 +178,11 @@ async fn test_update_transaction_preserves_idempotency_key_and_rerun_dedup() {
     assert_eq!(readback["total"], 1, "编辑后重跑不应新增交易");
 }
 
-// ---------------------------------------------------------------------------
-// sell 创建端点壳层接线证明（ADR-0087 决策 2）：仅证请求经批量端点进入写入
-// 接缝且资源可读；卖出金额公式与本位币折算等域结果细节归域单测
-// （investment/tests/trade.rs、transaction/tests/amount.rs）。
-// ---------------------------------------------------------------------------
-
-/// sell 经批量端点进入写入接缝的接线证明（issue #771）：创建成功且资源可读，
-/// 不展开折算数值等域结果细节。
 #[tokio::test]
 async fn test_create_sell_via_batch_succeeds_and_readable() {
     let (app, conn) = setup_app();
-    // 投资铺垫（账户+标的+1:1 汇率）一行建成：工厂组合种子（spec #728 / ADR-0084）。
     test_support::seed_investment_setup(&conn.lock().unwrap(), "acc-inv-sell", "inst-sell");
 
-    // 前置：买入建仓（卖出按 FIFO 消费持仓），经同一公开端点造数。
     let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-sell","date":"2026-01-10","instrument_id":"inst-sell","quantity":10.0,"price_cents":1000000,"fee_cents":0}]}"#;
     let bought = post_batch(&app, buy.to_string()).await;
     assert_eq!(
@@ -214,7 +195,6 @@ async fn test_create_sell_via_batch_succeeds_and_readable() {
     let results = post_batch(&app, sell.to_string()).await;
     assert_eq!(results[0]["success"], true, "sell 应成功: {:?}", results[0]);
 
-    // 接线证明：创建的资源可读回。
     let sell_id = results[0]["id"].as_str().unwrap();
     let (_, readback) = get_json(&app, "/api/v1/transactions").await;
     let txs = items_of(&readback);
@@ -225,18 +205,10 @@ async fn test_create_sell_via_batch_succeeds_and_readable() {
     assert_eq!(row["kind"], "sell");
 }
 
-// ---------------------------------------------------------------------------
-// 出资账户（issue #935 / ADR-0096）：壳层接线证明。参数解包、状态码与错误码
-// 在此锁定；准入闭集与归因语义的域细节归域单测
-//（transaction/funding/tests.rs、transaction/tests/amount.rs）。
-// ---------------------------------------------------------------------------
-
-/// 买入携带出资账户：参数解包 + 读回形状证明。创建成功且读回携带出资账户 id。
 #[tokio::test]
 async fn test_create_buy_with_funding_account_roundtrips_readback() {
     let (app, conn) = setup_app();
     test_support::seed_investment_setup(&conn.lock().unwrap(), "acc-inv-fund", "inst-fund");
-    // USD 现金出资账户（与投资账户同币种，现金类准入闭集内）。
     test_support::seed_account(
         &conn.lock().unwrap(),
         "acc-fund-usd",
@@ -254,7 +226,6 @@ async fn test_create_buy_with_funding_account_roundtrips_readback() {
         created[0]
     );
 
-    // 读回携带出资账户（可选字段出现在读模型）。
     let buy_id = created[0]["id"].as_str().unwrap();
     let (_, readback) = get_json(&app, "/api/v1/transactions").await;
     let row = items_of(&readback)
@@ -267,7 +238,6 @@ async fn test_create_buy_with_funding_account_roundtrips_readback() {
     );
 }
 
-/// 通用 kind 携带出资账户：批量端点行级容错（Invalid 类归行级 success:false）。
 #[tokio::test]
 async fn test_create_expense_with_funding_account_rejected_in_batch() {
     let (app, _) = setup_app();
@@ -286,7 +256,6 @@ async fn test_create_expense_with_funding_account_rejected_in_batch() {
     );
 }
 
-/// 投资账户不可作出资账户（准入闭集排除 investment）：顶层码化 400。
 #[tokio::test]
 async fn test_update_buy_investment_funding_returns_coded_400() {
     let (app, conn) = setup_app();
@@ -316,7 +285,6 @@ async fn test_update_buy_investment_funding_returns_coded_400() {
     );
 }
 
-/// 出资账户币种与结算币种不一致：顶层码化 400，params 按消息动态值顺序排列。
 #[tokio::test]
 async fn test_update_buy_funding_currency_mismatch_returns_coded_400() {
     let (app, conn) = setup_app();
@@ -341,7 +309,6 @@ async fn test_update_buy_funding_currency_mismatch_returns_coded_400() {
     );
 }
 
-/// 软删出资账户不可被新选择：顶层码化 404（存在且未软删校验，与商户/保单同款）。
 #[tokio::test]
 async fn test_update_buy_deleted_funding_account_returns_coded_404() {
     let (app, conn) = setup_app();
@@ -369,9 +336,6 @@ async fn test_update_buy_deleted_funding_account_returns_coded_404() {
     assert_eq!(err["code"], "funding.account-not-found");
 }
 
-/// buy 携带转入账户即拒绝（issue #1187）：现金腿归结算账户（出资账户或投资账户），
-/// 不存在转入侧——携带会被余额写路径误用于覆盖转入侧余额。批量端点行级拒绝
-/// （单行失败不回滚整批），拒绝不落任何行。
 #[tokio::test]
 async fn test_create_buy_with_to_account_rejected_with_readable_error() {
     let (app, conn) = setup_app();
@@ -392,8 +356,6 @@ async fn test_create_buy_with_to_account_rejected_with_readable_error() {
     );
 }
 
-/// sell 携带转入账户即拒绝（issue #1187，与 buy 同款守卫）：守卫先于可卖数量
-/// 校验，无需建仓即可触发。
 #[tokio::test]
 async fn test_create_sell_with_to_account_rejected_with_readable_error() {
     let (app, conn) = setup_app();
@@ -414,7 +376,6 @@ async fn test_create_sell_with_to_account_rejected_with_readable_error() {
     );
 }
 
-/// buy 修改携带转入账户：顶层码化 400（issue #1187）。
 #[tokio::test]
 async fn test_update_buy_with_to_account_returns_coded_400() {
     let (app, conn) = setup_app();
@@ -438,7 +399,6 @@ async fn test_update_buy_with_to_account_returns_coded_400() {
     );
 }
 
-/// sell 修改携带转入账户：顶层码化 400（issue #1187），原交易保持不变。
 #[tokio::test]
 async fn test_update_sell_with_to_account_returns_coded_400() {
     let (app, conn) = setup_app();
@@ -465,13 +425,10 @@ async fn test_update_sell_with_to_account_returns_coded_400() {
     );
 }
 
-/// 卖出携带出资账户：参数解包 + 读回形状证明（sell 臂，issue #938）。
-/// 创建成功且读回携带出资账户 id；赎回款归出资端（归因语义归域单测）。
 #[tokio::test]
 async fn test_create_sell_with_funding_account_roundtrips_readback() {
     let (app, conn) = setup_app();
     test_support::seed_investment_setup(&conn.lock().unwrap(), "acc-inv-sell", "inst-sell");
-    // 先余额买入建仓（sell 需足额持仓）。
     let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-sell","date":"2026-01-10","instrument_id":"inst-sell","quantity":10.0,"price_cents":1000000,"fee_cents":0}]}"#;
     let buy_results = post_batch(&app, buy.to_string()).await;
     assert_eq!(
@@ -496,7 +453,6 @@ async fn test_create_sell_with_funding_account_roundtrips_readback() {
         created[0]
     );
 
-    // 读回携带出资账户（可选字段出现在读模型）。
     let sell_id = created[0]["id"].as_str().unwrap();
     let (_, readback) = get_json(&app, "/api/v1/transactions").await;
     let row = items_of(&readback)
@@ -509,7 +465,6 @@ async fn test_create_sell_with_funding_account_roundtrips_readback() {
     );
 }
 
-/// 修改卖出换出资账户再清空：全字段替换语义经壳层读回验证（issue #938）。
 #[tokio::test]
 async fn test_update_sell_funding_swap_and_clear_roundtrip() {
     let (app, conn) = setup_app();
@@ -542,7 +497,6 @@ async fn test_update_sell_funding_swap_and_clear_roundtrip() {
     let created = post_batch(&app, sell.to_string()).await;
     let id = created[0]["id"].as_str().unwrap();
 
-    // 换出资账户：读回携带新值。
     let swap = r#"{"kind":"sell","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-swap","date":"2026-01-11","instrument_id":"inst-swap","quantity":10.0,"price_cents":1000000,"fee_cents":0,"funding_account_id":"acc-fund-b"}"#;
     let (status, bytes) = put_transaction_via_api(&app, id, swap).await;
     assert_eq!(status, StatusCode::OK, "换出资账户应成功: {:?}", bytes);
@@ -556,7 +510,6 @@ async fn test_update_sell_funding_swap_and_clear_roundtrip() {
         "换端后读回新值: {row}"
     );
 
-    // 清空出资账户：读回 null（读投影恒携带该字段，null 即清空生效）。
     let clear = r#"{"kind":"sell","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-swap","date":"2026-01-11","instrument_id":"inst-swap","quantity":10.0,"price_cents":1000000,"fee_cents":0,"funding_account_id":null}"#;
     let (status, bytes) = put_transaction_via_api(&app, id, clear).await;
     assert_eq!(status, StatusCode::OK, "清空出资账户应成功: {:?}", bytes);
@@ -571,8 +524,6 @@ async fn test_update_sell_funding_swap_and_clear_roundtrip() {
     );
 }
 
-/// 卖出携带投资账户出资（准入闭集排除 investment）：顶层码化 400（sell 臂，
-/// 与买入同款准入路径；闭集与错误码的域细节归域单测）。
 #[tokio::test]
 async fn test_update_sell_investment_funding_returns_coded_400() {
     let (app, conn) = setup_app();
@@ -609,8 +560,6 @@ async fn test_update_sell_investment_funding_returns_coded_400() {
     );
 }
 
-/// 基金转换就地修改（PUT，#979 / ADR-0099）：全字段替换——转出腿精确回补后按新输入
-/// 重新 FIFO 消耗，结转成本（行金额锚点）与转入批次随之重建；读投影带回新两腿。
 #[tokio::test]
 async fn test_update_convert_in_place_rebuilds_carry() {
     let (app, conn) = setup_app();
@@ -642,7 +591,6 @@ async fn test_update_convert_in_place_rebuilds_carry() {
     assert_eq!(created[0]["success"], true, "{created:?}");
     let id = created[0]["id"].as_str().unwrap();
 
-    // 只转 2 份：结转成本 = round(2 × 10000 ÷ 100) = 200 分。
     let body = r#"{"kind":"convert","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-put","date":"2026-02-05","instrument_id":"inst-cv-p-out","quantity":2.0,"to_instrument_id":"inst-cv-p-in","to_quantity":2.0,"out_amount_cents":240,"in_amount_cents":240,"fee_cents":0}"#;
     let (status, bytes) = put_transaction_via_api(&app, id, body).await;
     assert_eq!(status, StatusCode::OK, "就地修改转换应成功: {bytes:?}");
@@ -650,7 +598,6 @@ async fn test_update_convert_in_place_rebuilds_carry() {
     assert_eq!(updated["kind"], "convert");
     assert_eq!(updated["date"], "2026-02-05");
 
-    // 接线证明：读回反映新提交的两腿（域结果细节（结转成本、批次回补）归域单测）。
     let (_, list) = get_json(&app, "/api/v1/transactions").await;
     let row = items_of(&list)
         .iter()
@@ -660,8 +607,6 @@ async fn test_update_convert_in_place_rebuilds_carry() {
     assert_eq!(row["convert"]["to_instrument_id"], "inst-cv-p-in");
 }
 
-/// PUT 禁止从/到 `convert` 的 kind 变更（#979 / ADR-0099 决策 5）：新码化错误，
-/// 顶层 400；两侧均不落半套副作用。
 #[tokio::test]
 async fn test_update_kind_to_or_from_convert_returns_coded_400() {
     let (app, conn) = setup_app();
@@ -689,14 +634,12 @@ async fn test_update_kind_to_or_from_convert_returns_coded_400() {
     let created = post_batch(&app, batch_body(&[buy], None)).await;
     let buy_id = created[0]["id"].as_str().unwrap().to_string();
 
-    // 普通交易 → convert（kind 进）。
     let as_convert = r#"{"kind":"convert","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-kind","date":"2026-02-01","instrument_id":"inst-cv-k-out","quantity":1.0,"to_instrument_id":"inst-cv-k-in","to_quantity":1.0,"out_amount_cents":100,"in_amount_cents":100,"fee_cents":0}"#;
     let (status, bytes) = put_transaction_via_api(&app, &buy_id, as_convert).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(err["code"], "trade.convert-kind-change-forbidden");
 
-    // convert → 普通交易（kind 出）。
     let convert = r#"{"kind":"convert","amount_cents":0,"currency_code":"CNY","account_id":"acc-cv-kind","date":"2026-02-01","instrument_id":"inst-cv-k-out","quantity":10.0,"to_instrument_id":"inst-cv-k-in","to_quantity":10.0,"out_amount_cents":1100,"in_amount_cents":1100,"fee_cents":0}"#;
     let created = post_batch(&app, batch_body(&[convert], None)).await;
     assert_eq!(created[0]["success"], true, "{created:?}");
@@ -707,7 +650,6 @@ async fn test_update_kind_to_or_from_convert_returns_coded_400() {
     let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(err["code"], "trade.convert-kind-change-forbidden");
 
-    // 两条拒绝路径都不留半套副作用：两行原样可读回（域结果细节归域单测）。
     let (_, list) = get_json(&app, "/api/v1/transactions").await;
     let ids: Vec<&str> = items_of(&list)
         .iter()
@@ -717,8 +659,6 @@ async fn test_update_kind_to_or_from_convert_returns_coded_400() {
     assert!(ids.contains(&convert_id.as_str()), "被拒的转换仍在");
 }
 
-/// 删除转换（#979 / ADR-0099）：转出腿逐批次精确回补、转入批次的在用 sell 与 buy
-/// 同规级联软删，随后原买入可删。
 #[tokio::test]
 async fn test_delete_convert_restores_positions_and_cascades_sell() {
     let (app, conn) = setup_app();
@@ -755,8 +695,6 @@ async fn test_delete_convert_restores_positions_and_cascades_sell() {
     let (status, bytes) = delete_transaction_via_api(&app, &convert_id).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "删除转换应成功: {bytes:?}");
 
-    // 接线证明：转换行与级联软删的 sell 都不再出现在读回结果里
-    // （回补精确值、批次清理明细等域结果细节归域单测）。
     let (_, list) = get_json(&app, "/api/v1/transactions").await;
     let ids: Vec<&str> = items_of(&list)
         .iter()
@@ -768,13 +706,10 @@ async fn test_delete_convert_restores_positions_and_cascades_sell() {
         "级联软删的 sell 不再可读回"
     );
 
-    // 转换链解开后原买入可删。
     let (status, _) = delete_transaction_via_api(&app, &buy_id).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 }
 
-/// 删除转换的转换链守卫（#979 / ADR-0099）：转入批次已被在用后续转换消耗时，
-/// 顶层码化 400（须从最后一腿往前处理）。
 #[tokio::test]
 async fn test_delete_convert_guarded_by_later_convert_returns_coded_400() {
     let (app, conn) = setup_app();
@@ -813,7 +748,6 @@ async fn test_delete_convert_guarded_by_later_convert_returns_coded_400() {
     let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(err["code"], "trade.consumed-by-convert-delete");
 
-    // 从最后一腿往前删则放行。
     let (status, _) = delete_transaction_via_api(&app, &second_id).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (status, _) = delete_transaction_via_api(&app, &first_id).await;
@@ -822,8 +756,6 @@ async fn test_delete_convert_guarded_by_later_convert_returns_coded_400() {
     assert_eq!(items_of(&list).len(), 1, "只剩建仓买入");
 }
 
-/// 币种一致性守卫的 HTTP 接线（issue #1770 / ADR-0134 决策 1）：把既有交易改为
-/// 与账户币种不一致 → 顶层 400 码化（code + params 双参），行原样在场。
 #[tokio::test]
 async fn test_update_transaction_currency_mismatch_returns_coded_400() {
     let (app, conn) = setup_app();
@@ -839,7 +771,6 @@ async fn test_update_transaction_currency_mismatch_returns_coded_400() {
     assert_eq!(created[0]["success"], true, "{created:?}");
     let id = created[0]["id"].as_str().unwrap().to_string();
 
-    // 币种改为与账户不一致（CNY ≠ 账户 HKD）：码化 400，params = [账户币种, 交易币种]。
     let mismatch = format!(
         r#"{{"kind":"expense","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}"#
     );
@@ -849,24 +780,17 @@ async fn test_update_transaction_currency_mismatch_returns_coded_400() {
     assert_eq!(err["code"], "transaction.currency-mismatch");
     assert_eq!(err["params"], serde_json::json!(["HKD", "CNY"]));
 
-    // 行原样在场：币种未被部分改写。
     let (_, body) = get_json(&app, "/api/v1/transactions").await;
     let items = items_of(&body);
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["currency_code"], "HKD");
 }
 
-/// 折算来源留痕（#1548 / ADR-0011 修订）：批量导入非本位币历史行 → 列表读回
-/// 带出本笔使用的汇率值与来源（series）；同币种行两列为 null（空值语义）。
-/// 断言对准用户可观察结果（HTTP 读回），证明写路径留痕接线在壳层入口生效。
 #[tokio::test]
 async fn test_batch_import_foreign_currency_row_readback_exposes_fx_trace() {
     let (app, conn) = setup_app();
-    // 币种一致性守卫（issue #1770 / ADR-0134）：外币行与同币种对照行各挂
-    // 自己币种的账户。
     let account_id = create_account_via_api_with_currency(&app, "港币账户", "HKD").await;
     let cny_account_id = create_account_via_api(&app, "现金账户").await;
-    // 交易周（2026-07-01 所属周）序列点：缺它整行被拒（缺汇率不静默降级）。
     {
         let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
         test_support::seed_fx_rate_history(&guard, "fxh-api", "HKD", "CNY", "2026-06-29", 0.9);
@@ -885,8 +809,6 @@ async fn test_batch_import_foreign_currency_row_readback_exposes_fx_trace() {
     let (_, body) = get_json(&app, "/api/v1/transactions").await;
     let txs = items_of(&body);
     assert_eq!(txs.len(), 2);
-    // 断言面 = 留痕字段的可读回（本票新增的用户可观察结果）；折算数值本身
-    // 归域单测（CONTEXT-testing「接线证明」：域结果细节不属壳层断言面）。
     for tx in txs {
         if tx["currency_code"] == "HKD" {
             assert_eq!(tx["fx_rate_used"], 0.9, "留痕 = 本笔使用的序列汇率值");
@@ -906,10 +828,6 @@ async fn test_batch_import_foreign_currency_row_readback_exposes_fx_trace() {
     }
 }
 
-/// 编辑沿用的折算留痕（#1550 / ADR-0011 修订）：批量导入的非本位币历史行，
-/// 序列点消失后仍可编辑非金额字段且留痕逐位不变；改金额则按既有码化错误失败，
-/// 不静默沿用旧值。接线证明：删除修改协议的沿用接线（基线未传/三元组比较删除）
-/// → 本用例变红（note-only PUT 会因 fx.rate-missing 变 400）。
 #[tokio::test]
 async fn test_update_foreign_currency_row_reuses_fx_trace_when_series_missing() {
     let (app, conn) = setup_app();
@@ -925,13 +843,11 @@ async fn test_update_foreign_currency_row_reuses_fx_trace_when_series_missing() 
     assert_eq!(created[0]["success"], true, "{created:?}");
     let id = created[0]["id"].as_str().unwrap().to_string();
 
-    // 数据源查不到当年值：序列点在编辑前消失。
     {
         let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
         guard.execute("DELETE FROM fx_rate_history", []).unwrap();
     }
 
-    // 只改备注：成功且折算留痕逐位不变（僵尸行可编辑）。
     let note_only = format!(
         r#"{{"kind":"expense","amount_cents":1000,"currency_code":"HKD","account_id":"{account_id}","date":"2026-07-01","note":"只改备注"}}"#
     );
@@ -942,13 +858,10 @@ async fn test_update_foreign_currency_row_reuses_fx_trace_when_series_missing() 
         "note-only 编辑不应重查序列: {bytes:?}"
     );
     let updated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    // 断言面 = 本票新增的用户可观察结果：编辑成功 + 折算留痕逐位可读回；
-    // 本位币金额数值归域单测（CONTEXT-testing「接线证明」，#1548 同款退让）。
     assert_eq!(updated["fx_rate_used"], 0.9);
     assert_eq!(updated["fx_rate_source"], "series");
     assert_eq!(updated["note"], "只改备注");
 
-    // 改金额：新三元组查不到汇率 → 既有 fx.rate-missing 码化 400，不静默沿用。
     let amount_changed = format!(
         r#"{{"kind":"expense","amount_cents":2000,"currency_code":"HKD","account_id":"{account_id}","date":"2026-07-01"}}"#
     );
@@ -958,17 +871,11 @@ async fn test_update_foreign_currency_row_reuses_fx_trace_when_series_missing() 
     assert_eq!(err["code"], "fx.rate-missing");
 }
 
-/// 逐笔显式汇率（#1549 / ADR-0011 修订）：批量导入带 `fxRate` 的历史行——
-/// 数据源覆盖不到的日期（不种序列点）由调用方给定汇率，整行成功且读回留痕
-/// 标为 `explicit`；同批不带 `fxRate` 的本位币行零改动照常落库（契约只增不改）。
 #[tokio::test]
 async fn test_batch_import_row_with_explicit_fx_rate_readback_marks_explicit() {
     let (app, _conn) = setup_app();
-    // 币种一致性守卫（issue #1770 / ADR-0134）：外币行与同币种对照行各挂
-    // 自己币种的账户。
     let account_id = create_account_via_api_with_currency(&app, "港币账户", "HKD").await;
     let cny_account_id = create_account_via_api(&app, "现金账户").await;
-    // 刻意不种任何序列点：显式汇率正是服务「序列查不到」的日期。
 
     let hkd_tx = format!(
         r#"{{"kind":"expense","amount_cents":1000,"currency_code":"HKD","account_id":"{account_id}","date":"2022-01-21","fx_rate":0.88}}"#
@@ -993,13 +900,9 @@ async fn test_batch_import_row_with_explicit_fx_rate_readback_marks_explicit() {
     }
 }
 
-/// 显式汇率非法（#1549 验收 3）：非正 → 码化错误逐行失败、不落库；同币种行
-/// 携带 fxRate → 方向不符拒绝。非法行不产生库内行，合法行不受影响。
 #[tokio::test]
 async fn test_batch_import_illegal_explicit_fx_rate_rejected_not_persisted() {
     let (app, conn) = setup_app();
-    // 币种一致性守卫（issue #1770 / ADR-0134）：两行各挂自己币种的账户，
-    // 使失败原因仍落在显式汇率合法性上。
     let account_id = create_account_via_api_with_currency(&app, "港币账户", "HKD").await;
     let cny_account_id = create_account_via_api(&app, "现金账户").await;
 
@@ -1011,8 +914,6 @@ async fn test_batch_import_illegal_explicit_fx_rate_rejected_not_persisted() {
     );
     let created = post_batch(&app, batch_body(&[&zero, &same_currency], None)).await;
     assert_eq!(created[0]["success"], false, "非正显式汇率应失败");
-    // 批量导入逐行结果只回 message 字符串（错误码入行结果属 spec #1540 范围外技术债），
-    // 断言面只能是消息子串；码值断言归域单测（fx.explicit-rate-non-positive）。
     assert!(created[0]["error"].as_str().unwrap().contains("大于 0"));
     assert_eq!(created[1]["success"], false, "同币种携带显式汇率应失败");
     assert!(
@@ -1031,8 +932,6 @@ async fn test_batch_import_illegal_explicit_fx_rate_rejected_not_persisted() {
     }
 }
 
-/// 导入幂等身份不受显式汇率影响（#1549 验收 4）：同批带 `fxRate` 的行以同
-/// 幂等键重跑仍只落一份（去重键不含汇率，同键命中跳过）。
 #[tokio::test]
 async fn test_batch_import_explicit_fx_rate_row_idempotent_rerun() {
     let (app, conn) = setup_app();
@@ -1055,13 +954,6 @@ async fn test_batch_import_explicit_fx_rate_row_idempotent_rerun() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 多出资方（issue #1860 / ADR-0138）：契约互斥、组合支付三路径与读回
-// ---------------------------------------------------------------------------
-
-/// 组合支付样例全链：创建（funding[] 与 account_id 互斥）→ 读回（分解行
-/// account_id=null + 出资项数组按顺序位）→ 两账户余额正确 → 列表计 1 笔
-/// （报表按交易计数、不按出资计数）。
 #[tokio::test]
 async fn test_combined_payment_roundtrip_readback_and_balances() {
     let (app, conn) = setup_app();
@@ -1078,14 +970,11 @@ async fn test_combined_payment_roundtrip_readback_and_balances() {
     );
     let id = created[0]["id"].as_str().unwrap();
 
-    // 读回：分解行 account_id=null、出资项按顺序位稳定返回（BREAKING 契约形态）。
     let (_, readback) = get_json(&app, "/api/v1/transactions").await;
     let rows = items_of(&readback);
     assert_eq!(rows.len(), 1, "列表按交易计数（组合支付计 1 笔）");
     let row = &rows[0];
     assert_eq!(row["id"], id);
-    // 行金额 = 交易金额全额（28160）：报表按行聚合（每行计 1 笔、取行金额），
-    // 组合支付不因多出资方被重复计数或拆分金额。
     assert_eq!(
         row["amount_cents"], 28160,
         "组合支付行按交易计 1 笔、金额不拆分"
@@ -1103,7 +992,6 @@ async fn test_combined_payment_roundtrip_readback_and_balances() {
     assert_eq!(fundings[1]["account_id"], balance);
     assert_eq!(fundings[1]["amount_cents"], 25307);
 
-    // 余额缓存（ADR-0067）：每一出资方按 kind 符号（expense 记 −）整体重算。
     let (_, b) = get_json(&app, "/api/v1/accounts/balances").await;
     assert_eq!(balance_of(b.as_array().unwrap(), "小金库"), -2853);
     assert_eq!(balance_of(b.as_array().unwrap(), "余额"), -25307);
@@ -1121,7 +1009,6 @@ async fn test_combined_payment_roundtrip_readback_and_balances() {
     }
 }
 
-/// 契约互斥：携带分解时再给 account_id → 顶层码化 400。
 #[tokio::test]
 async fn test_combined_payment_with_account_id_returns_coded_400() {
     let (app, _) = setup_app();
@@ -1140,7 +1027,6 @@ async fn test_combined_payment_with_account_id_returns_coded_400() {
     );
 }
 
-/// Σ 分解 ≠ 交易金额 → 行级码化错误（含两个插值）。
 #[tokio::test]
 async fn test_combined_payment_sum_mismatch_returns_coded_error() {
     let (app, _) = setup_app();
@@ -1158,7 +1044,6 @@ async fn test_combined_payment_sum_mismatch_returns_coded_error() {
     );
 }
 
-/// 扣款标签超 50 字 → 行级码化错误。
 #[tokio::test]
 async fn test_combined_payment_label_too_long_returns_coded_error() {
     let (app, _) = setup_app();
@@ -1172,7 +1057,6 @@ async fn test_combined_payment_label_too_long_returns_coded_error() {
     assert!(results[0]["error"].as_str().unwrap().contains("50 字"));
 }
 
-/// 修改单 → 多（PUT 全量语义）：分解行读回 null + 子行替换 + 两账户余额正确。
 #[tokio::test]
 async fn test_update_single_to_multi_conversion_roundtrips() {
     let (app, _) = setup_app();
@@ -1185,7 +1069,6 @@ async fn test_update_single_to_multi_conversion_roundtrips() {
     let created = post_batch(&app, batch_body(&[&tx], None)).await;
     let id = created[0]["id"].as_str().unwrap().to_string();
 
-    // 单 → 多：account_id 置 null（None ⇔ 必须携非空分解，不用空串哨兵）。
     let body = format!(
         r#"{{"kind":"expense","amount_cents":28160,"currency_code":"CNY","date":"2026-07-01","funding":[{{"account_id":"{wallet}","amount_cents":2853}},{{"account_id":"{balance}","amount_cents":25307}}]}}"#
     );
@@ -1200,7 +1083,6 @@ async fn test_update_single_to_multi_conversion_roundtrips() {
     assert_eq!(balance_of(balances.as_array().unwrap(), "余额"), -25307);
 }
 
-/// 退款（refund）缺省按出资比例派生：读回派生分解、尾差归顺序位最小项。
 #[tokio::test]
 async fn test_refund_of_combined_payment_derives_breakdown_by_ratio() {
     let (app, _) = setup_app();
@@ -1213,8 +1095,6 @@ async fn test_refund_of_combined_payment_derives_breakdown_by_ratio() {
     let created = post_batch(&app, batch_body(&[&tx], None)).await;
     let expense_id = created[0]["id"].as_str().unwrap();
 
-    // 退款 ¥70.40（28160/4）：2853/28160 → floor 713，25307/28160 → floor 6326，
-    // 合计 7039、尾差 1 分归顺序位最小项（713 → 714）。
     let refund = format!(
         r#"{{"kind":"refund","amount_cents":7040,"currency_code":"CNY","date":"2026-07-02","refund_of_transaction_id":"{expense_id}"}}"#
     );
@@ -1241,7 +1121,6 @@ async fn test_refund_of_combined_payment_derives_breakdown_by_ratio() {
     assert_eq!(fundings[1]["amount_cents"], 6326);
 }
 
-/// 删除组合支付行：每一出资方余额恢复（受影响账户并集含出资端）。
 #[tokio::test]
 async fn test_delete_combined_payment_restores_all_funded_balances() {
     let (app, _) = setup_app();
@@ -1262,9 +1141,6 @@ async fn test_delete_combined_payment_restores_all_funded_balances() {
     assert_eq!(balance_of(balances.as_array().unwrap(), "余额"), 0);
 }
 
-// 来源订单号契约（issue #1862 / ADR-0138 决策 9）：批量导入携 `source_order_no`
-// 落列、读回原样返回；同单多行同单号；PUT 全字段替换缺省（null）即清除。
-// 域行为权威在域单测（read/tests/order.rs），本处只做一步可观察的接线证明。
 #[tokio::test]
 async fn test_batch_import_source_order_no_roundtrips_and_put_clears() {
     let (app, _conn) = setup_app();
@@ -1279,13 +1155,11 @@ async fn test_batch_import_source_order_no_roundtrips_and_put_clears() {
     assert_eq!(created[0]["duplicate"], false);
     assert_eq!(created[1]["duplicate"], false);
 
-    // 读回：两行各自携带同一订单号（详情订单区的数据源）。
     let (_, body) = get_json(&app, "/api/v1/transactions").await;
     let rows = items_of(&body);
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|t| t["source_order_no"] == "JD-9001"));
 
-    // PUT 全字段替换：缺省（不提交）即清除。
     let id = rows[0]["id"].as_str().unwrap();
     let put = format!(
         r#"{{"kind":"expense","amount_cents":28160,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}"#
@@ -1303,14 +1177,6 @@ async fn test_batch_import_source_order_no_roundtrips_and_put_clears() {
     assert_eq!(untouched["source_order_no"], "JD-9001", "未修改行保持原值");
 }
 
-// ---------------------------------------------------------------------------
-// 购买项（issue #1882 / ADR-0138 决策 9/10）：3 件商品订单写入读回、kind 准入、
-// 可空单价
-// ---------------------------------------------------------------------------
-
-/// 多商品订单全链（一步可观察证明）：写入通道提交一笔带 3 件商品的 `expense`
-/// → 读回拿到 3 条购买项、顺序与提交顺序一致（对账单顺序）；源单只给订单总额
-/// 时单价留空照常写入与读回；非 `expense` 携带被拒（码化）。
 #[tokio::test]
 async fn test_multi_item_order_purchases_roundtrip_readback() {
     let (app, conn) = setup_app();
@@ -1326,7 +1192,6 @@ async fn test_multi_item_order_purchases_roundtrip_readback() {
     );
     let id = created[0]["id"].as_str().unwrap();
 
-    // 读回：3 条购买项、顺序与提交一致、可空单价原样。
     let (_, readback) = get_json(&app, "/api/v1/transactions").await;
     let rows = items_of(&readback);
     assert_eq!(rows.len(), 1, "列表按交易计数（3 件商品仍计 1 笔）");
@@ -1343,7 +1208,6 @@ async fn test_multi_item_order_purchases_roundtrip_readback() {
     );
     assert_eq!(purchases[2]["name"], "纸巾");
 
-    // 子表落库证据（3 行、顺序位 0..2）。
     let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
     let sub: i64 = guard
         .query_row(
@@ -1355,7 +1219,6 @@ async fn test_multi_item_order_purchases_roundtrip_readback() {
     assert_eq!(sub, 3);
 }
 
-/// kind 准入（契约只增不改的准入面）：`transfer` 携带购买项 → 行级码化拒绝。
 #[tokio::test]
 async fn test_purchases_on_transfer_rejected_coded() {
     let (app, _) = setup_app();
@@ -1373,7 +1236,6 @@ async fn test_purchases_on_transfer_rejected_coded() {
     );
 }
 
-/// 修改路径（PUT 全量替换语义）：换明细整体重写；缺省（不提交）整体移除。
 #[tokio::test]
 async fn test_update_replaces_purchases_full_semantics() {
     let (app, _) = setup_app();
@@ -1384,7 +1246,6 @@ async fn test_update_replaces_purchases_full_semantics() {
     let created = post_batch(&app, batch_body(&[&tx], None)).await;
     let id = created[0]["id"].as_str().unwrap().to_string();
 
-    // 换明细：全量重写。
     let put = format!(
         r#"{{"kind":"expense","amount_cents":10000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01","purchases":[{{"name":"纸巾","quantity":3}}]}}"#
     );
@@ -1396,7 +1257,6 @@ async fn test_update_replaces_purchases_full_semantics() {
     assert_eq!(purchases.len(), 1);
     assert_eq!(purchases[0]["name"], "纸巾");
 
-    // 缺省（不提交）= 整体移除。
     let clear = format!(
         r#"{{"kind":"expense","amount_cents":10000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}"#
     );

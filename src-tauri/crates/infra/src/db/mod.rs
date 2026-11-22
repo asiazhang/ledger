@@ -1,17 +1,3 @@
-//! 数据库基础设施模块（issue #1127 按职责拆分后，本文件只做声明与再导出；
-//! 时间与身份工厂已自 #1128 升顶层 [`crate::ids`]，原路径经再导出保持；
-//! #1131 起引导层五模块升顶层 [`crate::boot`]，原路径经再导出保持）：
-//! - [`migrate`]：迁移链与 `init_db`（schema 守卫尾部接线，ADR-0100）；
-//! - [`connection`]：建连 / 重置 / 完整性检查 / 内存库；
-//! - [`runtime`]：连接层统一写入口与提交点后置钩子（ADR-0032）、阻塞线程池
-//!   helper（ADR-0069 形状乙）与 [`DbState`]；
-//! - [`facade`]：异步 DB 门面（ADR-0125 决策 1–3）——写 / 读两条专用 DB 线程 +
-//!   作业通道 + oneshot 回传，取用独占与 panic 恢复收在门面内；`job_gate` 是
-//!   限时等待与弃权原语（crate 内私有，决策 8 豁免台账退役，issue #1415）。
-//!
-//! 其余子模块（perf_trace / query / schema_guard / tx_scope）各承载单一主题。
-//! 既有消费方 `crate::db::…` 路径经再导出零改动。
-
 pub mod connection;
 pub mod facade;
 pub mod facade_handles;
@@ -23,6 +9,7 @@ pub mod runtime;
 pub mod schema_guard;
 pub mod tx_scope;
 
+pub use connection::SYNC_SPLIT_USER_VERSION;
 pub use connection::{
     CONCURRENT_BUSY_TIMEOUT, SYNC_DB_FILE_NAME, SYNC_MOUNT_FAILED, SYNC_TABLES, check_integrity,
     open_connection, open_connection_in, open_connection_readonly, open_connection_readonly_in,
@@ -32,15 +19,10 @@ pub use connection::{
     snapshot_sync_tables_into, sync_db_path,
 };
 pub use facade::DbFacade;
-pub use facade_handles::{DbReadHandle, DbSlotPair, DbWriteHandle, install_facade};
-pub use job_gate::LockOutcome;
-// 接线证明的观察点：仅测试构建可见（生产接线由源码扫描守门核对，issue #1410）。
 #[cfg(test)]
 pub(crate) use facade_handles::facade_installed;
-// migrations / SYNC_SPLIT_USER_VERSION：迁移链与世界边界版本的单点。pub 语义
-// 边界见 migrate::migrations 文档——生产路径只经 init_db；测试侧构造历史世界
-// （拆库前形态）经本入口停版。
-pub use connection::SYNC_SPLIT_USER_VERSION;
+pub use facade_handles::{DbReadHandle, DbSlotPair, DbWriteHandle, install_facade};
+pub use job_gate::LockOutcome;
 pub use migrate::{init_db, migrations, schema_version};
 pub use runtime::{
     AfterCommitHook, DbState, LOCK_HOLD_PROBE_THRESHOLD, register_after_commit_hook,
@@ -48,16 +30,8 @@ pub use runtime::{
 };
 pub use runtime::{probe_lock_hold, probe_lock_hold_within, register_lock_hold_budget};
 
-// 时间与身份工厂现住顶层 [`crate::ids`]（issue #1128 / ADR-0111 决策 2：
-// 非数据库关切，文件工具等原语引用不穿透 db）；既有 `crate::db::…` 调用点
-// 与协议 crate 的 `ledger_infra::db::…` 路径经本再导出保持零改动。
 pub use crate::ids::{DETERMINISTIC_NAMESPACE, deterministic_uuid, iso_at, new_uuid, now_iso};
 
-// 引导层五模块现住顶层 [`crate::boot`]（issue #1131 / ADR-0111 决策 2：
-// 开库前的引导关切不是 db 库机制，依赖方向 boot → db 单向）；既有
-// `crate::db::{boot, data_location, book_registry, encryption,
-// passphrase_cache}::…` 调用点与协议 crate 的 `ledger_infra::db::…` 路径经
-// 本再导出保持零改动（#1128 的 ids 同款口径：路径兼容面，非机制依赖）。
 pub use crate::boot::{
     book_registry, data_location, disposition as boot, encryption, passphrase_cache,
 };

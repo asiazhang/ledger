@@ -1,7 +1,3 @@
-//! 行级写入语义：insert_row 全列映射与审计字段生成、update_row 字段覆盖与
-//! 幂等身份保留、normalize → insert_row → update_row 端到端、置脏触发
-//! （ADR-0032：已收口连接层统一写入口）。
-
 use rusqlite::{Connection, params};
 
 use tauri_app_lib::ledger_transaction::amount::TransactionKind;
@@ -13,9 +9,7 @@ use super::common::input;
 use crate::tests::common::seed_category;
 use tauri_app_lib::test_support;
 
-/// 读回一行交易的全部业务字段（与 insert_row 的列映射逐列比对）。
 fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
-    // 命名字段而非长元组：读回列多，逐列命名可读性更好（也避免 clippy type_complexity）。
     let row: RowFields = conn
         .query_row(
             "SELECT kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
@@ -65,7 +59,6 @@ fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
     }
 }
 
-/// `read_row` 的中间读回结构（命名字段避免长元组）。
 struct RowFields {
     kind: TransactionKind,
     amount_cents: i64,
@@ -83,12 +76,6 @@ struct RowFields {
     fx_rate_source: Option<tauri_app_lib::ledger_transaction::amount::FxRateSource>,
 }
 
-// ---------------------------------------------------------------------------
-// insert_row：全列映射 + 审计字段
-// ---------------------------------------------------------------------------
-
-/// 落库后逐列读回比对：业务字段与归一化行一致，审计字段由模块生成
-/// （version=1 / is_deleted=0 / created_at==updated_at / device_id 一致）。
 #[test]
 fn insert_row_writes_full_row_and_generates_audit_fields() {
     let conn = test_support::open();
@@ -105,10 +92,8 @@ fn insert_row_writes_full_row_and_generates_audit_fields() {
     let id = insert_row(&conn, &norm).unwrap();
     assert!(!id.is_empty());
 
-    // 业务字段全列映射正确
     assert_eq!(read_row(&conn, &id), norm);
 
-    // 审计字段
     let (created_at, updated_at, version, device_id, is_deleted): (String, String, i64, String, i64) =
         conn.query_row(
             "SELECT created_at,updated_at,version,device_id,is_deleted FROM transactions WHERE id=?1",
@@ -128,7 +113,6 @@ fn insert_row_writes_full_row_and_generates_audit_fields() {
     assert_eq!(is_deleted, 0);
 }
 
-/// 两次 insert 生成互异的 id。
 #[test]
 fn insert_row_generates_distinct_ids() {
     let conn = test_support::open();
@@ -139,11 +123,6 @@ fn insert_row_generates_distinct_ids() {
     assert_ne!(id1, id2);
 }
 
-// ---------------------------------------------------------------------------
-// update_row：字段覆盖 + 幂等身份保留 + 版本递增
-// ---------------------------------------------------------------------------
-
-/// update 覆盖全部可编辑字段，保留 id / created_at，version 递增。
 #[test]
 fn update_row_overwrites_fields_and_bumps_version() {
     let conn = test_support::open();
@@ -201,14 +180,12 @@ fn update_row_overwrites_fields_and_bumps_version() {
     assert!(!updated_at.is_empty(), "updated_at 应刷新");
 }
 
-/// update 保留幂等身份（idempotency_key / dedup_hash，由命令层回写、本模块不触碰）。
 #[test]
 fn update_row_preserves_idempotent_identity() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let norm = normalize(&conn, &input(TransactionKind::Expense, 500, "acc")).unwrap();
     let id = insert_row(&conn, &norm).unwrap();
-    // 模拟批量导入回写幂等身份（与 batch 模块落库后 UPDATE 同构）
     conn.execute(
         "UPDATE transactions SET dedup_hash=?2, idempotency_key=?3 WHERE id=?1",
         params![id, "hash-abc", "row-1"],
@@ -237,11 +214,6 @@ fn update_row_preserves_idempotent_identity() {
     assert_eq!(hash.as_deref(), Some("hash-abc"), "dedup_hash 应保留");
 }
 
-// ---------------------------------------------------------------------------
-// 端到端：normalize → insert_row → update_row
-// ---------------------------------------------------------------------------
-
-/// 创建再修改一笔交易：归一化 → 落库 → 读回 → 更新 → 读回，全链路一致。
 #[test]
 fn normalize_insert_update_roundtrip() {
     let conn = test_support::open();
@@ -286,13 +258,6 @@ fn normalize_insert_update_roundtrip() {
     assert_eq!(created_at_after, created_at, "created_at 应保留");
 }
 
-// ---------------------------------------------------------------------------
-// 置脏触发（ADR-0032：已收口连接层统一写入口）
-// ---------------------------------------------------------------------------
-
-/// Writer 落库本身对备份域零感知（ADR-0032）：insert_row / update_row 不再自带
-/// 置脏；同样的落库经连接层写入口 `write_locked` 执行（命令层真实形态）时，
-/// 由提交点单点置脏。
 #[test]
 fn writer_rows_do_not_mark_dirty_entry_does() {
     let conn = test_support::open();
@@ -310,10 +275,6 @@ fn writer_rows_do_not_mark_dirty_entry_does() {
         "更新同样不置脏"
     );
 
-    // 经写入口执行同样的落库（与 IPC 命令同形态）→ 提交点置脏，且置脏是幂等
-    // 标记、不做「已脏跳过」优化。测试面自取槽锁后直呼已持锁形态（取锁便捷
-    // 形态已退役，issue #1438；门面作业在同一起点上执行）。共享锁形态由工厂
-    // 打开的连接构造（建库两行序的唯一入口是 test_support::open，ADR-0084 决策 8 规则 1）。
     let conn = std::sync::Arc::new(std::sync::Mutex::new(test_support::open()));
     {
         let guard = conn.lock().unwrap_or_else(|e| e.into_inner());

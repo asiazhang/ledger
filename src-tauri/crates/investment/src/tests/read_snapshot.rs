@@ -1,9 +1,3 @@
-//! 多语句读闭包的快照一致性探针（issue #1699 / #1702）：写提交落在语句之间时，
-//! 同屏口径必须仍互相自洽——总量=分量和（realized_pnl）、分子分母同时点
-//! （financial_freedom）、多腿同屏（overview）、现金流集与期末市值同时点
-//! （mwr）、读数↔汇率折算同时点（组合走势）。探针机制见
-//! `tauri_app_lib::test_support::snapshot_probe`。
-
 use ledger_transaction::create_transaction_internal;
 
 use super::super::*;
@@ -21,18 +15,10 @@ fn empty_filter() -> PnlFilter {
     }
 }
 
-/// 两张单值表（按年 / 按账户）必须同快照（#1845 契约重塑后同款纪律）：两表
-/// 各自对同一份已实现腿取数折算，总量=分量和的旧不变式随 total 字段退役，
-/// 同屏口径不变式改对准「两表已实现腿合计相等」。探针在按账户腿取数
-/// （`SELECT a.id, a.name, …`，与按年的 `SELECT substr(t.date, 1, 4)…` 区分）
-/// 开始前于另一连接改写匹配行已实现盈亏——
-/// - 读闭包无快照保护（红）：按年腿读旧值、按账户腿读新值，两表合计差 5000；
-/// - 读闭包收进读事务（绿）：注入写被挡住，两表同见一套数，断言绿。
 #[test]
 fn realized_pnl_two_tables_share_one_snapshot_under_concurrent_write() {
     let dir = ScratchDir::new("investment-pnl-read-snapshot");
     let conn = open_file(dir.path());
-    // CNY 账户（同币种恒等，折算不引入第二变量——探针只观测腿取数时点）。
     seed_account(&conn, "acc-pnl", "A股账户", "investment", "CNY", 0);
     seed_instrument(&conn, "inst-pnl", "600000", "浦发银行", "CNY", "sh");
 
@@ -47,7 +33,6 @@ fn realized_pnl_two_tables_share_one_snapshot_under_concurrent_write() {
     )
     .unwrap();
 
-    // 探针：按账户腿取数开始前，另一连接提交匹配行改写。
     snapshot_probe::arm(
         &conn,
         dir.path(),
@@ -81,11 +66,6 @@ fn realized_pnl_two_tables_share_one_snapshot_under_concurrent_write() {
     );
 }
 
-/// 分子（可投资资产）与分母（年度预算总额）必须同时点：探针在分母 budgets
-/// 聚合开始前于另一连接提交一条年度预算——两次读数之间库内唯一变动就是这笔
-/// 注入写，逐字段相等即「分子分母同进同退」：
-/// - 读闭包无快照保护（红）：分子读旧、分母读新，基线对拍变红；
-/// - 读闭包收进读事务（绿）：注入写被挡住，两次读数逐字段相等。
 #[test]
 fn financial_freedom_numerator_and_denominator_share_timepoint() {
     let dir = ScratchDir::new("investment-ff-read-snapshot");
@@ -93,7 +73,6 @@ fn financial_freedom_numerator_and_denominator_share_timepoint() {
     seed_account(&conn, "acc-ff", "投资账户", "investment", "CNY", 200_000);
     ledger_accounts::balance::refresh_all_account_balances(&conn).unwrap();
     seed_exchange_rate(&conn, "CNY", "CNY", 1.0);
-    // 分母基线：一条月度预算（支出分类取迁移预置的确定性种子 id）。
     conn.execute(
         "INSERT INTO budgets (id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES ('budget-snap-baseline','95d6dc66-12c4-5f2b-bf9b-1d439a9c8100','monthly',100000,'2026-01-01',?1,?1,1,'test',0)",
@@ -103,8 +82,6 @@ fn financial_freedom_numerator_and_denominator_share_timepoint() {
 
     let before = query_financial_freedom(&conn).unwrap();
 
-    // 探针：分母聚合（`FROM budgets`，全闭包唯一命中）开始前，另一连接提交预算写
-    //（簿记戳引 FIXED_NOW 常量，不落字面量——测试守门规则 3）。
     let inject_budget = format!(
         "INSERT INTO budgets (id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES ('budget-snap-extra','95d6dc66-12c4-5f2b-bf9b-1d439a9c8100','yearly',666000,'2026-01-01','{FIXED_NOW}','{FIXED_NOW}',1,'probe',0)"
@@ -145,11 +122,6 @@ fn financial_freedom_numerator_and_denominator_share_timepoint() {
     );
 }
 
-/// 投资概览同屏多腿必须同快照（issue #1699 同根因——全页单值读数由现金 / 持仓 /
-/// 未实现 / 已实现 / 分红多段拼出）：探针在已实现腿（`SELECT sls.realized_pnl_cents`，
-/// 位于现金、持仓、未现实现各腿之后）开始前于另一连接改写匹配行已实现盈亏——
-/// - 读闭包无快照保护（红）：前段读旧、已实现腿读新，累计收益三腿和漂移；
-/// - 读闭包收进读事务（绿）：注入写被挡住，各腿同见一套数。
 #[test]
 fn investment_overview_legs_share_one_snapshot() {
     let dir = ScratchDir::new("investment-overview-read-snapshot");
@@ -210,13 +182,6 @@ fn investment_overview_legs_share_one_snapshot() {
     );
 }
 
-/// 收益率的现金流集与期末市值必须同快照（issue #1702）：现值模式的 XIRR 输入 =
-/// 现金流集（`FROM transactions`）+ 当前期末市值（`FROM v_holdings`），两次独立
-/// 语句。探针在期末市值读取开始前于另一连接把现价翻倍——
-/// - 读闭包无快照保护（红）：现金流读旧（投入 100000），期末市值读新（220000），
-///   解出的收益率相对基线漂移；
-/// - 读闭包收进读事务（绿）：注入写被挡住，两次解出的收益率逐字段相等
-///   （基线对拍——XIRR 解算非线性，口径断言取「与基线同时点」形态）。
 #[test]
 fn mwr_flows_and_end_value_share_one_snapshot() {
     let dir = ScratchDir::new("investment-mwr-read-snapshot");
@@ -229,13 +194,10 @@ fn mwr_flows_and_end_value_share_one_snapshot() {
         make_buy_input("acc-mwr", "inst-mwr", 10.0, 1_000_000, 0),
     )
     .unwrap();
-    // 现价高出买入价 10%：期末市值 110000 分，收益率非零且可解。
     seed_market_price(&conn, "inst-mwr", 1_100_000, "USD");
 
     let before = query_money_weighted_return_summary(&conn, &MwrRange::default()).unwrap();
 
-    // 探针：期末市值读取（`FROM v_holdings v JOIN accounts a`，与现金流的
-    // `FROM transactions t` 区分）开始前，另一连接提交现价翻倍。
     snapshot_probe::arm(
         &conn,
         dir.path(),
@@ -325,13 +287,6 @@ fn mwr_flows_and_end_value_share_one_snapshot() {
     );
 }
 
-/// 累计收益折本位币单值的腿取数与汇率折算必须同快照（issue #1797 接入 #1699
-/// 纪律：三腿 UNION 取数与逐行当期汇率折算是两次独立语句，读数↔汇率折算形态）。
-/// 探针在逐行汇率读取（`SELECT rate FROM exchange_rates`，闭包内首条腿取数之后的
-/// 语句——marker 不得命中闭包首条语句，否则注入整体落在读锁之前）开始前于另一
-/// 连接把当期汇率翻倍——
-/// - 读闭包无快照保护（红）：腿金额读旧、汇率读新，合计相对基线漂移；
-/// - 读闭包收进读事务（绿）：注入写被挡住，合计与基线逐位相等。
 #[test]
 fn cumulative_pnl_native_total_legs_and_fx_share_one_snapshot() {
     let dir = ScratchDir::new("investment-cpnt-read-snapshot");
@@ -364,8 +319,6 @@ fn cumulative_pnl_native_total_legs_and_fx_share_one_snapshot() {
         "种子三腿 ×当期汇率 7 应得 103_600 分（否则口径断言空转）"
     );
 
-    // 探针：逐行折算的当期汇率读取（`SELECT rate FROM exchange_rates`，全闭包
-    // 唯一形态）开始前，另一连接提交汇率翻倍。
     snapshot_probe::arm(
         &conn,
         dir.path(),
@@ -389,11 +342,6 @@ fn cumulative_pnl_native_total_legs_and_fx_share_one_snapshot() {
     );
 }
 
-/// 组合走势的读数与汇率折算必须同快照（issue #1702）：曲线各周 = 数量 × 周线价
-/// × 同期汇率，价格行与汇率历史是两次独立语句（读数↔汇率折算形态，#1699 根因
-/// 清单第四形态）。探针在汇率历史读取开始前于另一连接把 USD→CNY 汇率翻倍——
-/// - 读闭包无快照保护（红）：价格行读旧、汇率读新，周点市值相对基线漂移；
-/// - 读闭包收进读事务（绿）：注入写被挡住，曲线与基线逐点相等。
 #[test]
 fn portfolio_trend_prices_and_fx_share_one_snapshot() {
     let dir = ScratchDir::new("investment-trend-read-snapshot");
@@ -407,7 +355,6 @@ fn portfolio_trend_prices_and_fx_share_one_snapshot() {
         &["2026-01-10", "2026-02-02", "2026-02-09"],
     );
     seed_instrument(&conn, "inst-trd-snap", "AAPL", "Apple", "USD", "unknown");
-    // 周价格点（万分之一元）：w1=10 元、w2=20 元（USD 计价，折算靠同期汇率）。
     seed_price_history(
         &conn,
         "ph-s1",
@@ -424,7 +371,6 @@ fn portfolio_trend_prices_and_fx_share_one_snapshot() {
         200_000,
         "USD",
     );
-    // w1 之前买入 10 股：两个采样周都持有 10 股。
     create_transaction_internal(
         &conn,
         make_buy_input("acc-trd-snap", "inst-trd-snap", 10.0, 100_000, 0),
@@ -442,8 +388,6 @@ fn portfolio_trend_prices_and_fx_share_one_snapshot() {
         "种子曲线应为 10 股 × 周价 × 汇率 7（否则口径断言空转）"
     );
 
-    // 探针：汇率历史读取（`FROM fx_rate_history`，全闭包唯一命中）开始前，
-    // 另一连接提交汇率翻倍。
     snapshot_probe::arm(
         &conn,
         dir.path(),

@@ -6,12 +6,8 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { NSelect } from "naive-ui";
 import LogSettings from "@/settings/LogSettings.vue";
 
-// 日志卡片（issue #930）：自 AboutSettings 迁入「通用」Tab，IPC 契约与文案逐字不变
-// （get_log_level / set_log_level / open_log_dir，spec #608 / #611）。
-
 describe("LogSettings.vue — 日志等级下拉（spec #611）", () => {
   async function mountWithLogLevel(level: string) {
-    // 挂载即 onMounted 拉取持久化档位（get_log_level）
     mockInvoke.mockResolvedValueOnce({ level });
     const wrapper = mount(LogSettings);
     await flushPromises();
@@ -28,7 +24,6 @@ describe("LogSettings.vue — 日志等级下拉（spec #611）", () => {
     const wrapper = await mountWithLogLevel("info");
     expect(wrapper.findComponent(NSelect).exists()).toBe(true);
     expect(wrapper.text()).toContain("日志等级");
-    // 静态提示说明 RUST_LOG 本次启动内优先（spec #608 接缝 3 / AC5）
     expect(wrapper.text()).toContain("RUST_LOG");
   });
 
@@ -60,7 +55,6 @@ describe("LogSettings.vue — 打开日志目录（issue #283）", () => {
   }
 
   it("成功路径：点击按钮以新命令名 open_log_dir 调用 IPC 一次，无错误提示", async () => {
-    // 挂载时 get_log_level 成功（不触发错误提示），清空计数后再统计 open_log_dir
     mockInvoke.mockResolvedValue({ level: "info" });
     const wrapper = mount(LogSettings);
     await flushPromises();
@@ -75,7 +69,6 @@ describe("LogSettings.vue — 打开日志目录（issue #283）", () => {
 
   it("失败路径：错误提示原样透传后端中文错误，前缀不双层", async () => {
     const backendError = "打开日志目录失败：权限不足";
-    // 挂载时 get_log_level 成功（避免加载失败提前触发错误提示），再仅令 open_log_dir 失败
     mockInvoke.mockResolvedValue({ level: "info" });
     const wrapper = mount(LogSettings);
     await flushPromises();

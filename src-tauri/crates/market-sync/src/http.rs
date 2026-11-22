@@ -1,17 +1,3 @@
-//! 行情 HTTP 网络层（issue #89）：行情接口请求、多主机切换、重试与限流冷却、
-//! 响应解析。与数据库无关，可独立测试（见 `tests.rs` 中本地 HTTP 服务用例）。
-//! 客户端与等待原语为异步形态（reqwest async / 异步睡眠 / 异步互斥体，issue #1411
-//! / ADR-0125 决策 5/6）；同步编排与通道束闭包已随 #1412 直接 `.await`，两壳生产
-//! 入口与投资域注入闭包已随 #1413 async 化，#1411 过渡同步桥拆除——本层生产面
-//! 不再有任何阻塞驱动点。
-//! 标的全量同步（clist 分页爬取）已随 ADR-0081 决策 3 退役删除（issue #698），
-//! 单点行情（stock/get）已随 #1567 接线腾讯后删除、历史净值通道（lsjz）已随
-//! #1571 接线新浪全历史面后删除、东财日 K / FX 汇率腿已随 #1551 换 ECB 后删除
-//!（ADR-0130 决策 1：不留死代码）。本层是多主机轮换 / 重试 / 限流冷却与 GBK
-//! 解码的共享原语，供现役取数单元消费：腾讯行情批量报价（字节 + GBK）、腾讯
-//! 周 K（JSON）、新浪场外基金批量面与单只全历史面（字节 / 文本）、基金详情
-//! `.js` 数据文件（文本）、证监会基金电子披露（文本）与 ECB 参考汇率文件（文本）。
-
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -20,17 +6,9 @@ use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 
 use ledger_infra::error::{AppError, Result};
 
-// 共享限速基线（ADR-0121 决策 5）：相邻两次请求至少间隔 1 秒——「正常状态贴近
-// 数据源可承受量级」的保守起点，东财时代标定后沿用为全部分享通道的共用节奏
-//（现役：腾讯 / 新浪 / 证监会披露 / ECB）。写死的固定间隔在两个方向上都错
-//（保守值浪费额度、激进值撞风控），故限速随观测自适应：命中限流/拦截页即降速
-// 并复用既有冷却，之后每成功一次逐步回升到本起点。
 const REQUEST_INTERVAL: Duration = Duration::from_millis(1000);
-/// 自适应限速的降速倍数（命中限流 / 疑似风控页时）。
 const PACER_SLOWDOWN_FACTOR: u32 = 2;
-/// 自适应限速的回升步长：每次成功请求把间隔降 10%（不低过起点）。
 const PACER_RECOVERY_STEPS: u32 = 10;
-/// 自适应限速的上限（连续被限流时的最大请求间隔）。
 const PACER_MAX_INTERVAL: Duration = Duration::from_secs(8);
 const MAX_RETRIES: u32 = 3;
 const BASE_BACKOFF: Duration = Duration::from_secs(1);
@@ -38,17 +16,12 @@ const THROTTLE_COOLDOWN: Duration = Duration::from_secs(30);
 const MAX_THROTTLE_RETRIES: u32 = 6;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// 重试策略：传输层错误走短退避，风控限流（429 / 200 非 JSON）走长冷却等待窗口过去；
-/// `request_timeout` 是单次请求（含响应体读取）的总超时，随载荷大小取值。
 #[derive(Clone, Copy)]
 pub(super) struct RetryConfig {
     pub(super) max_retries: u32,
     pub(super) base_backoff: Duration,
     pub(super) max_throttle_retries: u32,
     pub(super) throttle_cooldown: Duration,
-    /// 单次请求总超时：ECB 全量历史等数 MB 大文件腿按载荷调长（issue #1765）——
-    /// 30s 基线对大文件偏紧，超时在 body 读段被掐断时表现为读体错误，曾恰好落进
-    /// 「读取响应失败」重试分支。其余通道保持 [`REQUEST_TIMEOUT`]。
     pub(super) request_timeout: Duration,
 }
 
@@ -64,29 +37,13 @@ impl RetryConfig {
     }
 }
 
-/// 串行自适应限速器（ADR-0121 决策 5）：保证相邻两次 HTTP 请求之间至少间隔当前
-/// 间隔，间隔随观测自适应——正常状态停在构造时的基线（生产 = 数据源可承受量级），
-/// 命中限流响应或疑似风控页翻倍降速（上限 [`PACER_MAX_INTERVAL`]），此后每成功
-/// 一次逐步回升（[`PACER_RECOVERY_STEPS`] 步回到基线）。
-///
-/// 基线即构造间隔，也是回升下限与降速下限的锚：测试传零间隔即整只限速器惰性
-///（降速乘零仍是零），不因自适应逻辑凭空产生等待。
-///
-/// **构造收口（issue #1674，编译期断言）**：命名构造器 [`Pacer::new`] 是
-/// `cfg(test)`，字段在模块外不可见——正常构建下传输层模块之外构造不出任何
-/// 限速器实例，生产面唯一获取点 = [`shared_pacer`] 的进程级单例（其初始化是
-/// 全库唯一的生产构造点）。「全库仅一个限速器实例」由此可断言，不另设扫描
-/// 守门（编译期成立后冗余，grilling 定稿 #1674）。
 pub(super) struct Pacer {
     last: Option<Instant>,
     interval: Duration,
-    /// 基线间隔（正常状态的目标值）：回升不低过它、降速以它为起点。
     baseline: Duration,
 }
 
 impl Pacer {
-    /// 测试构造口（`cfg(test)` 收口，issue #1674）：生产面拿不到本构造器，
-    /// 只能经 [`shared_pacer`] 取单例。
     #[cfg(test)]
     pub(super) fn new(interval: Duration) -> Self {
         Self {
@@ -96,8 +53,6 @@ impl Pacer {
         }
     }
 
-    /// 发起一次请求前的等待：不足当前间隔则异步睡满（ADR-0125 决策 6——等待
-    /// 原语异步化，间隔与串行保证不变）。
     pub(super) async fn wait(&mut self) {
         if let Some(last) = self.last {
             let elapsed = last.elapsed();
@@ -108,13 +63,10 @@ impl Pacer {
         self.last = Some(Instant::now());
     }
 
-    /// 当前请求间隔（观测与测试用）：限速自适应的可观察面。
     pub(super) fn interval(&self) -> Duration {
         self.interval
     }
 
-    /// 一次成功请求（响应按预期解析）：间隔逐步回升到基线——
-    /// 「恢复后逐步回升」，不一步跳回（避免风控窗口刚过就重新撞上）。
     pub(super) fn record_success(&mut self) {
         if self.interval > self.baseline {
             let step = self.interval / PACER_RECOVERY_STEPS;
@@ -125,35 +77,20 @@ impl Pacer {
         }
     }
 
-    /// 命中限流响应（429）或疑似风控页（非 JSON 拦截页）：翻倍降速（封顶）。
-    /// 冷却等待复用 `RetryConfig::throttle_cooldown`（本处只调间隔）。
     pub(super) fn record_throttled(&mut self) {
         let next = self.interval.saturating_mul(PACER_SLOWDOWN_FACTOR);
         self.interval = next.min(PACER_MAX_INTERVAL.max(self.interval));
     }
 }
 
-/// 取一次限流 pacer 的异步守卫：从发请求前一直持有到响应处理完（ADR-0125
-/// 决策 6——锁的粒度不变，只把 `std` 互斥体换成可在 `.await` 之间持有的异步
-/// 互斥体；`std` 守卫跨 `await` 持有会让 future 失去 `Send`）。异步互斥体无
-/// 中毒语义：抓取 panic 不再毒化限速状态。
 pub(super) async fn lock_pacer(pacer: &AsyncMutex<Pacer>) -> AsyncMutexGuard<'_, Pacer> {
     pacer.lock().await
 }
 
-/// 进程级共享限速器单例（issue #1375 额度让路 / issue #1674 限速单点）：前台
-///（用户动作：手动同步与手动按代码查询）与后台补全等全部车道共享同一份 `Pacer`
-///——数据源的请求额度是进程全局的，相邻两次请求（不管来自哪条车道、哪个入口）
-/// 之间都保持当前间隔。本函数的初始化是**全库唯一的限速器生产构造点**（命名
-/// 构造器均为 `cfg(test)`，见 [`Pacer`]）；先例：`bulk::shared_circuit`（跨同步
-/// 记忆的进程级单例，通道束每次重建而记忆不随束消亡）——限速器同理，束每次
-/// 同步/每轮重建，限速状态必须活在束之外。
 pub(super) fn shared_pacer() -> Arc<AsyncMutex<Pacer>> {
     static SHARED: OnceLock<Arc<AsyncMutex<Pacer>>> = OnceLock::new();
     SHARED
         .get_or_init(|| {
-            // 全库唯一的生产构造点（issue #1674）：命名构造器是 cfg(test)，
-            // 字段在本模块外不可见——生产代码在传输层模块外另造限速器即编译失败。
             Arc::new(AsyncMutex::new(Pacer {
                 last: None,
                 interval: REQUEST_INTERVAL,
@@ -163,14 +100,8 @@ pub(super) fn shared_pacer() -> Arc<AsyncMutex<Pacer>> {
         .clone()
 }
 
-/// 前台在途计数（issue #1375 让行语义的状态位）：前台车道每个请求在途期间
-/// 持有一个 [`ForegroundGuard`]，计数即「此刻有前台请求在途」；后台车道发
-/// 请求前等它归零。原子量足够：让行是尽力而为的礼让语义，硬保证由共享
-/// pacer 的互斥串行承担。
 static FOREGROUND_INFLIGHT: AtomicUsize = AtomicUsize::new(0);
 
-/// 前台在途守卫（RAII）：构造即计数 +1，作用域结束（请求完成/失败/panic）
-/// 自动 -1。前台车道的抓取闭包在请求前构造，闭包返回时自然释放。
 pub(super) struct ForegroundGuard;
 
 impl ForegroundGuard {
@@ -186,9 +117,6 @@ impl Drop for ForegroundGuard {
     }
 }
 
-/// 后台让行等待（issue #1375）：前台请求在途期间异步轮询等待归零，绝不与前台
-/// 并发抢额度——用户动作优先于后台补全。归零窗口极短（前台请求本身被共享
-/// pacer 限速），轮询间隔取小让后台能及时察觉恢复。
 const FOREGROUND_YIELD_POLL: Duration = Duration::from_millis(50);
 
 pub(super) async fn wait_foreground_idle() {
@@ -197,15 +125,10 @@ pub(super) async fn wait_foreground_idle() {
     }
 }
 
-/// 异步睡眠原语（ADR-0125 决策 6）：限速等待、退避与让行自旋统一走这里，
-/// 不占用调用线程。
 async fn sleep(duration: Duration) {
     tokio::time::sleep(duration).await;
 }
 
-/// 构建行情 HTTP 客户端（异步 reqwest，issue #1411 / ADR-0125 决策 5：不再自持
-/// 运行时线程，构造与请求等待都不再要求调用线程不在异步上下文；增量同步与
-/// 按代码查询通道共用，UA 保持一致）。
 pub(super) fn build_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent("Mozilla/5.0")
@@ -213,12 +136,6 @@ pub(super) fn build_client() -> Result<reqwest::Client> {
         .map_err(|e| AppError::Io(e.to_string()))
 }
 
-/// 多主机全部失败的收口错误（issue #1765 码化收敛）：任一主机返回码化错误
-/// （如 `market.throttled`——限流预算耗尽是有意的用户可见分类）即透传首个；
-/// 否则收口为码化 `market.request-exhausted`。各主机失败明细保留在 message
-/// 中文原样里（码化错误的 message 是 fallback 文案，模板按码本地化），不进
-/// params——明细含中文错误文本，违反「params 须 locale 无关」（ADR-0050）；
-/// 透传路径同时把明细折进日志，错误链细节不丢。
 fn hosts_exhausted_error(failures: &[(String, AppError)]) -> AppError {
     let detail = failures
         .iter()
@@ -234,7 +151,6 @@ fn hosts_exhausted_error(failures: &[(String, AppError)]) -> AppError {
         format!("全部行情主机请求失败: {detail}"),
     )
 }
-/// 发送请求并解析 JSON，按序尝试多个主机，对传输错误做短退避、对限流拦截做长冷却重试。
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn request_json_from_hosts<T>(
     client: &reqwest::Client,
@@ -260,9 +176,6 @@ where
     Err(hosts_exhausted_error(&failures))
 }
 
-/// 同 [`request_json_from_hosts`] 的多主机切换，但返回**原始文本**（非 JSON 的
-/// 数据文件通道用，如基金详情页 `.js`；issue #1062）。解析与可信度判定留给调用方
-/// （文本层无法区分正常数据文件与被拦截 HTML 页，那是解析层的判据）。
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn request_text_from_hosts(
     client: &reqwest::Client,
@@ -285,9 +198,6 @@ pub(super) async fn request_text_from_hosts(
     Err(hosts_exhausted_error(&failures))
 }
 
-/// 同 [`request_text_from_hosts`] 的多主机切换，但返回**原始字节**（非 UTF-8
-/// 编码的通道用，如 GBK 报文；issue #1558）。复用同一套重试 / 多主机 / 限流冷却，
-/// 解码与可信度判定留给调用方（字节层无法区分正常 GBK 报文与被拦截 HTML 页）。
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn request_bytes_from_hosts(
     client: &reqwest::Client,
@@ -302,8 +212,6 @@ pub(super) async fn request_bytes_from_hosts(
     let mut failures: Vec<(String, AppError)> = Vec::new();
     for host in hosts {
         let url = format!("{host}{path}");
-        // 纯字节通道的解析恒成功（解码与形状判定在调用方），因此不命中
-        // `request_with_retry` 的「疑似被风控页」长冷却重试。
         let parsed = request_with_retry(client, &url, params, pacer, ctx, cfg, referer, &|bytes| {
             Ok(bytes.to_vec())
         })
@@ -316,9 +224,6 @@ pub(super) async fn request_bytes_from_hosts(
     Err(hosts_exhausted_error(&failures))
 }
 
-/// GBK 字节 → 文本：GBK 通道的解码原语，收口在本层单点（腾讯行情报价与新浪
-/// 场外基金批量面共用，issue #1558 / #1564）。解码出错（截断 / 非法字节序列）
-/// 即 fail-closed；合法但非 GBK 的内容（如被拦截页）留给调用方的形状判据处理。
 pub(super) fn decode_gbk(bytes: &[u8]) -> Result<String> {
     let (text, _, had_errors) = encoding_rs::GBK.decode(bytes);
     if had_errors {
@@ -345,7 +250,6 @@ where
     .await
 }
 
-/// 单主机请求重试 + 原样文本返回（非 JSON 数据文件通道，issue #1062）。
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn request_text_with_retry(
     client: &reqwest::Client,
@@ -362,10 +266,6 @@ pub(super) async fn request_text_with_retry(
     .await
 }
 
-/// 单主机请求重试核心：串行限速 → 发送 → 传输错误短退避 / 429 长冷却 / 响应字节
-/// 解析；解析失败按「疑似被风控拦截」长冷却重试，与既有 JSON 行为一致。纯文本通道
-/// 的解析恒成功，据此复用同一套重试。异步形态下所有等待（限速、退避、冷却）等价
-/// 迁移为异步睡眠，串行与重试语义不变（ADR-0125 决策 5/6）。
 #[allow(clippy::too_many_arguments)]
 async fn request_with_retry<T, P>(
     client: &reqwest::Client,
@@ -384,8 +284,6 @@ where
     let mut throttle_attempts = 0u32;
     loop {
         pacer.wait().await;
-        // 部分行情接口要求带 Referer 头模拟站内跳来源，缺省被拦截：新浪批量面
-        // 缺 Referer 返回 403（issue #1564）；已退役的东财 lsjz 亦同（issue #303）。
         let mut req = client.get(url).query(params).timeout(cfg.request_timeout);
         if let Some(referer) = referer {
             req = req.header(reqwest::header::REFERER, referer);
@@ -418,8 +316,6 @@ where
 
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             throttle_attempts += 1;
-            // 限速自适应（ADR-0121 决策 5）：限流响应即降速一档，冷却等待复用
-            // 既有 `throttle_cooldown`（不新增等待机制）。
             pacer.record_throttled();
             if throttle_attempts <= cfg.max_throttle_retries {
                 tracing::warn!(
@@ -439,10 +335,6 @@ where
         let bytes = match resp.bytes().await {
             Ok(b) => b,
             Err(e) => {
-                // 读体失败（连接中断 / 超时截断数 MB 大文件）与 429 同预算长冷却：
-                // issue #1765 前本分支无计数无限重试——命令永不返回，前端 loading
-                // 永不复位。耗尽后返回终态错误，由多主机收口为码化错误上屏
-                //（负向判据：删除本计数，「读体失败重试耗尽即收敛」测试即红）。
                 throttle_attempts += 1;
                 if throttle_attempts <= cfg.max_throttle_retries {
                     tracing::warn!(
@@ -458,14 +350,12 @@ where
         };
         match parse(&bytes) {
             Ok(parsed) => {
-                // 成功即逐步回升（恢复后不一步跳回基线）。
                 pacer.record_success();
                 return Ok(parsed);
             }
             Err(e) => {
                 let head = String::from_utf8_lossy(&bytes[..bytes.len().min(120)]);
                 throttle_attempts += 1;
-                // 疑似风控拦截页（非 JSON 响应）与 429 同待遇：降速一档再冷却。
                 pacer.record_throttled();
                 if throttle_attempts <= cfg.max_throttle_retries {
                     tracing::warn!(
@@ -489,10 +379,6 @@ where
     }
 }
 
-/// K 线单根样本：交易日（ISO 日期）与收盘价（真实价格值，非 f2 缩放值；#1906
-/// 起承载周线行——周行即该周最后一个有报价交易日）。
-/// 字段私有、构造经 [`KlineBar::new`]——通道束是壳层注入接缝的公开面，桩实现
-/// 方需要能构造应答形状（issue #1375 后台补全注入接缝同需）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct KlineBar {
     pub(super) date: String,

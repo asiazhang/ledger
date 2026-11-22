@@ -9,26 +9,15 @@ import { FX_SYNC_PROGRESS_EVENT, resetFxSyncForTest } from "@/settings/useFxSync
 let progressHandlers: CapturedListener[] = [];
 
 beforeEach(() => {
-  // 模块级单例跨挂载存活：每测复位，否则上测的报告/在途会漏进下测。
   resetFxSyncForTest();
   progressHandlers = captureListenHandlers();
 });
 
-/** 触发阶段事件监听器（tauri Event 载荷形状）。 */
 function fireProgress(payload: unknown): void {
   expect(progressHandlers.length).toBeGreaterThan(0);
   progressHandlers.at(-1)!({ event: FX_SYNC_PROGRESS_EVENT, payload });
 }
-/**
- * 汇率同步卡片组件测试（issue #1545）：invoke 测试接缝布线（ADR-0085）。
- * 三态断言对准用户可观察结果（ADR-0087 断言强度）：
- * - 成功：呈现覆盖区间 / 条数，按钮恢复可点；
- * - 进行中：按钮禁用（真实浏览器不向禁用按钮派发点击，即「不可重复触发」的机制）；
- * - 失败：失败原因按码本地化（errorMessage），「数据源不可达」与「该来源无数据」可分辨。
- */
 
-/** 命令契约静态快照：一次正常落库报告（#1544 窗口判据走全量回填、ECB 多周点
- * 形态的合理取值）。形状镜像 Rust `FxSyncReport`（含 persist 嵌套）。 */
 const REPORT = {
   full_backfilled: true,
   persist: {
@@ -91,8 +80,6 @@ describe("ExchangeRateSyncSettings.vue — 设置页「同步汇率」入口（i
   });
 
   it("失败原因按码本地化且可分辨：数据源不可达 ≠ 该来源无数据", async () => {
-    // mock 的 message 刻意不同于 errors.json 模板文案：断言的是模板文本（按码
-    // 查表插值路径），message 与模板同文时测试无法区分「按码本地化」与「透传」。
     wireInvokeSeam({
       overrides: {
         sync_exchange_rates: () =>
@@ -109,7 +96,6 @@ describe("ExchangeRateSyncSettings.vue — 设置页「同步汇率」入口（i
     expect(wrapper.text()).toContain("汇率数据源暂时不可达");
     expect(wrapper.text()).not.toContain("连接超时");
 
-    // 换成「该来源无数据」码：就地错误位呈现另一句可分辨的原因。
     wireInvokeSeam({
       overrides: {
         sync_exchange_rates: () =>
@@ -167,7 +153,6 @@ describe("ExchangeRateSyncSettings.vue — 设置页「同步汇率」入口（i
     fireProgress({ stage: "fetching", days_parsed: null });
     await flushPromises();
 
-    // 切走：卸载；再切回：重挂——同一份单例状态恢复
     first.unmount();
     const second = mountCard();
     await flushPromises();

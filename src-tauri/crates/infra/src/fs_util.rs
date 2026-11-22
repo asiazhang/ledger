@@ -1,14 +1,7 @@
-//! 文件级原子操作工具：临时名生成、原子替换、临时文件清理。
-//!
-//! 备份（`backup` 域）与 DataLocation 搬迁（`db::data_location`）共用的
-//! 既有机制（ADR-0018：「先写唯一临时名，校验后再替换启用」），独立成模块
-//! 避免基础设施层反向依赖命令层。
-
 use std::path::{Path, PathBuf};
 
 use crate::error::{AppError, Result};
 
-/// 生成与 `path` 同目录的临时文件路径（名称带唯一后缀）。
 pub fn temp_sibling(path: &Path, tag: &str) -> PathBuf {
     let file_name = path
         .file_name()
@@ -22,7 +15,6 @@ pub fn temp_sibling(path: &Path, tag: &str) -> PathBuf {
     ))
 }
 
-/// 原子替换：优先 rename（Unix 上覆盖已存在文件），失败时先删除再 rename（Windows 兼容）。
 pub fn replace_file(src: &Path, dst: &Path) -> Result<()> {
     match std::fs::rename(src, dst) {
         Ok(()) => Ok(()),
@@ -36,16 +28,12 @@ pub fn replace_file(src: &Path, dst: &Path) -> Result<()> {
     }
 }
 
-/// 若文件存在则删除（临时文件收尾用，容忍不存在）。
 pub fn cleanup(path: &Path) {
     if path.exists() {
         std::fs::remove_file(path).ok();
     }
 }
 
-/// 原子写整个文件：先写同目录唯一临时名，再替换启用，失败清理临时文件
-///（「先写唯一临时名，校验/写入后再替换启用」的文件级共形，调用方自带
-/// 内容校验；搬迁等需要写后校验的场景仍用 [`temp_sibling`] + [`replace_file`]）。
 pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
     let tmp = temp_sibling(path, "atomic");
     let result = (|| -> Result<()> {

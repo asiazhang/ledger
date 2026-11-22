@@ -21,20 +21,11 @@ import { registerToastSink } from "@ledger/loadable";
 import { hasOpenOverlay, resetOverlays } from "@ledger/ui-kit/overlayRegistry";
 import type { BookListInfo } from "@ledger/types";
 
-// 跨账本投资汇总入口导航（issue #1196 / ADR-0114 决策 6）：捕获 router.push。
-// 组件 setup 经 useRouter 取导航接缝；删除入口调用点即本文件 push 断言变红
-// （接线证明，ADR-0087 断言强度）。
 const pushMock = vi.fn();
 vi.mock("vue-router", () => ({
   useRouter: () => ({ push: pushMock }),
 }));
 
-// 侧栏左下角账本入口与弹层（issue #834 / ADR-0089）：弹层逻辑（清单渲染、切换
-// 意图、新建/改名/移除交互、折叠态浮标、注册表损坏警示）的组件级行为测试。
-// 命令应答一律走 invoke 测试接缝（ADR-0085）；useAppDialog 确认框与 AppModal
-// 卡片 teleport 到 body，经 @ledger/test-support/dom 的 body 查找家族断言。
-
-/** 登记表初始现场：两本账，默认账本活动。 */
 let registry: BookListInfo = {
   books: [
     { id: "b1", name: "默认账本", dir: "/data/default" },
@@ -45,7 +36,6 @@ let registry: BookListInfo = {
   fallback_reason: null,
 };
 
-/** 登记命令的可变应答：命令函数直接改写 registry，模拟注册表落盘后的最新现场。 */
 function mutableRegistrySeam(): void {
   const overrides: Record<string, InvokeSeamOverride> = {
     list_books: () => ({ ...registry, books: registry.books.map((b) => ({ ...b })) }),
@@ -86,7 +76,6 @@ async function openPanel(wrapper: ReturnType<typeof mountEntry>): Promise<void> 
   await nextTick();
 }
 
-/** body 上渲染出的账本行文本（弹层 teleport 到 body 后的清单读取形态）。 */
 function panelRows(): string[] {
   return Array.from(document.body.querySelectorAll(".book-row")).map((el) => el.textContent ?? "");
 }
@@ -101,7 +90,6 @@ function callsOf(cmd: string): number {
 }
 
 beforeEach(() => {
-  // Loadable 默认错误 toast 经模块级单点 sink；测试把它接到消息替身，供断言读取
   registerToastSink(messageApi);
   resetOverlays();
   registry = {
@@ -154,7 +142,6 @@ describe("账本入口（issue #834）：当前账本名与清单弹层", () => 
   });
 
   it("读取失败诚实呈现：入口回退「账本」字样，弹层内给错误行与重试；重试成功恢复清单", async () => {
-    // 首次 list_books 拒绝，其后恢复应答（计数桩，重试路径同门）
     let failures = 1;
     wireInvokeSeam({
       overrides: {
@@ -167,7 +154,6 @@ describe("账本入口（issue #834）：当前账本名与清单弹层", () => 
     const wrapper = mountEntry();
     await flushPromises();
     expect(wrapper.find('[data-testid="book-entry"]').text()).not.toContain("默认账本");
-    // 清单加载失败走 Loadable 默认策略（裸 errorMessage）；动作上下文由弹层错误行承载
     expect(messageCalls().some((m) => m.method === "error" && m.text === "boom")).toBe(true);
 
     await openPanel(wrapper);
@@ -187,7 +173,6 @@ describe("账本入口（issue #834）：切换经轻量确认后原地重载", 
     await openPanel(wrapper);
     await bodySelector(".book-row:nth-child(2)")!.trigger("click");
     await flushPromises();
-    // 确认弹窗出现：目标账本名 + 重载提示（非破坏级轻量确认，ADR-0078 语义）
     expect(dialogText()).toContain("副业账本");
     expect(dialogText()).toContain("重载");
     await clickDialogButton("切换并重载");
@@ -226,7 +211,6 @@ describe("账本入口（issue #834）：弹层内新建 / 改名 / 移除", () 
     await openPanel(wrapper);
     await findBodyButton("新建账本")!.trigger("click");
     await flushPromises();
-    // 弹窗打开：空名时主操作禁用（后端 name-required 同口径的前端兜底）
     expect(visibleModalText()).toContain("新建账本");
     const confirm = findBodyButton("创建", { exact: true })!;
     expect((confirm.element as HTMLButtonElement).disabled).toBe(true);
@@ -278,7 +262,6 @@ describe("账本入口（issue #834）：弹层内新建 / 改名 / 移除", () 
     await openPanel(wrapper);
     await bodySelector('[data-testid="book-remove-b2"]')!.trigger("click");
     await flushPromises();
-    // 气泡确认文案说明兜底（可重新登记找回，文件保留）
     expect(document.body.textContent).toContain("重新登记");
     await findBodyButton("移除", { exact: true })!.trigger("click");
     await flushPromises();
@@ -340,7 +323,6 @@ describe("账本入口（issue #834）：折叠态、不可变与回退警示", 
     const alert = document.body.querySelector(".book-panel-alert");
     expect(alert?.textContent).toContain("账本注册表异常");
     expect(alert?.textContent).toContain("账本注册表已损坏，已回退默认账本");
-    // 清单不可信（空）且变更入口禁用
     const create = findBodyButton("新建账本");
     expect(create).toBeDefined();
     expect((create!.element as HTMLButtonElement).disabled).toBe(true);
@@ -362,10 +344,8 @@ describe("跨账本投资汇总置顶入口（issue #1196 / ADR-0114 决策 6）
     await entry!.trigger("click");
     await flushPromises();
 
-    // 接线证明：导航去跨账本汇总路由；不切换账本、不重载应用。
     expect(pushMock).toHaveBeenCalledWith({ name: "cross-book-summary" });
     expect(callsOf("switch_book")).toBe(switchCallsBefore);
-    // 导航后收起弹层。
     expect(panelRows()).toHaveLength(0);
   });
 

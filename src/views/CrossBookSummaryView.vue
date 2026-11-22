@@ -21,13 +21,9 @@ import {
   summaryRoot,
 } from "./CrossBookSummaryView.css.ts";
 
-// 跨账本投资汇总页（issue #1196 / ADR-0114）：只读合计视图——折算、逐本状态与
-// 口径标注全部由后端 `cross_book_investment_summary` 产出，本组件只做装配渲染；
-// 无任何编辑入口（ADR-0114 决策 6，一切写入回到单账本语境）。
 const reference = useReferenceStore();
 const { summary, error, refresh } = useCrossBookSummary();
 
-// 币种标注（ADR-0114 决策 3 的界面义务）：发生过折算须显式说明口径。
 const currencyNote = computed(() => {
   if (!summary.value) return "";
   return summary.value.converted
@@ -35,7 +31,6 @@ const currencyNote = computed(() => {
     : t("crossBook.sameCurrencyNote", { currency: summary.value.target_currency });
 });
 
-// 部分合计警示（ADR-0114 决策 5）：存在未计入本时合计是部分合计，须显式说明。
 const hasExcluded = computed(() =>
   (summary.value?.books ?? []).some((b) => b.status !== "included"),
 );
@@ -52,8 +47,6 @@ const cards = computed(() => {
   return totals.map(({ key, cents }) => ({
     key,
     label: t(`crossBook.totals.${key}`),
-    // 口径说明复用投资域 concepts（issue #1369）：同名口径不写第二份措辞，
-    // 跨本语境差异（逐本折算、未解锁/未建库不计入）由 crossBook 作用域句承担
     concept: key,
     amount: formatAmount(cents, reference.currencyMap.get(s.target_currency)),
   }));

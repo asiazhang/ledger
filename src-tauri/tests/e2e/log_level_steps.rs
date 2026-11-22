@@ -1,10 +1,3 @@
-//! 日志等级配置持久化 BDD 步骤（spec #611）。
-//!
-//! 与既有设置类步骤同款：持 world 的连接锁直接读写后端领域缝
-//! （`logger::persisted_level` / `logger::set_persisted_level`），不经 IPC 命令
-//! （命令壳只做参数解包，没有 BDD 关注的额外行为）。「旧备份缺表」场景与
-//! `settings::get` 的表缺失自愈兜底（ADR-0017）同语义。
-
 use cucumber::{then, when};
 
 use ledger_infra::error::AppError;
@@ -12,7 +5,6 @@ use tauri_app_lib::shell_support::logger;
 
 use crate::world::LedgerWorld;
 
-/// 从最近一次操作的码化错误中取稳定错误码（与 encryption_steps 同款 helper）。
 fn code_of(err: &AppError) -> Option<&str> {
     match err {
         AppError::Coded { code, .. } => Some(code),

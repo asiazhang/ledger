@@ -55,12 +55,6 @@ const {
   refreshList,
 } = useBackup();
 
-// 客户端切片分页（issue #1383）：备份列表是有界快照列表（受管产物受保留上限封顶，
-// ADR-0008 分界的有界侧），行集一次全量拉取、翻页只是展示切片，不发数据请求。
-// 页大小固定 10，无页大小选择器与快捷跳页；单页收起分页条（paginate-single-page，
-// 持仓页签先例）。页码组件内持有、每次进入回第一页（商户管理表先例，对 ADR-0094
-// 默认粒度的显式豁免）；数据重拉（新备份/清理/手动刷新）保持当前页——页码越界时
-// 回落到有效范围，不落空页、不留陈旧页码（词条「回退不归零」等价形态）。
 const BACKUP_PAGE_SIZE = 10;
 const currentPage = ref(1);
 
@@ -80,8 +74,6 @@ const pagination = computed(() => ({
 const backupColumns = [
   { title: () => t("settings.data.backup.columns.fileName"), key: "file_name" },
   { title: () => t("settings.data.backup.columns.source"), key: "source_text", width: 70 },
-  // 来源设备列（ADR-0144 / issue #1985 跨端合并可见）：每行徽标呈现产物来源
-  // 设备（内层元数据明文水印）；缺水印（升级前旧产物等）呈「未知来源」警示徽标。
   {
     title: () => t("settings.data.backup.columns.device"),
     key: "source_device_text",
@@ -98,7 +90,6 @@ const backupColumns = [
         { default: () => row.source_device_text },
       ),
   },
-  // 加密列（issue #572）：密文备份显示锁形标记，明文/旧备份缺标记不显。
   {
     title: () => t("settings.data.backup.columns.encrypted"),
     key: "encrypted",
@@ -114,9 +105,6 @@ const backupColumns = [
   },
   { title: () => t("settings.data.backup.columns.size"), key: "size_text", width: 100 },
   { title: () => t("settings.data.backup.columns.time"), key: "created_at", width: 160 },
-  // 操作列（issue #653）：行级「在访达中显示」——系统文件管理器定位到该备份文件，
-  // 免在目录里人工比对长文件名（界面文本不可选，显式通道；路径与文件名不给
-  // 复制入口，分配见父 spec #649）。
   {
     title: () => t("settings.data.backup.columns.actions"),
     key: "actions",

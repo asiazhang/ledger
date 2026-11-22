@@ -5,8 +5,6 @@ import PolicyFormModal from "@/policy/PolicyFormModal.vue";
 import type { Policy } from "@ledger/types";
 import { componentVm } from "@ledger/test-support/component-vm";
 
-// AppModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 PoliciesView 先例）。
-
 function bodyQuery(selector: string): HTMLElement | null {
   return document.body.querySelector(selector);
 }
@@ -16,7 +14,6 @@ function formInput(testid: string): DOMWrapper<HTMLInputElement> {
   return new DOMWrapper(modal.querySelector(`[data-testid="${testid}"] input`)!);
 }
 
-/** 新建模式下打开的空保单（editing=null）。 */
 const noPolicy: Policy | null = null;
 
 function setupInvoke() {
@@ -40,14 +37,11 @@ async function openCreateModal() {
   return wrapper;
 }
 
-/** 开启协议开关并填全协议字段（金额/账户；起始日默认今天已就绪）。 */
 async function enableAgreement(wrapper: ReturnType<typeof mount>) {
   const toggle = new DOMWrapper(bodyQuery('[data-testid="policy-agreement-toggle"]')!);
   await toggle.trigger("click");
   await flushPromises();
   await formInput("policy-agreement-amount").setValue("3000");
-  // 扣款账户：PinyinSelect 内部选择，emit update:value（同保司下拉先例；
-  // teleport 不改变 vnode 层级，仍可从 wrapper 按定位找到组件）
   componentVm(wrapper.findComponent('[data-testid="policy-agreement-account"]')).$emit(
     "update:value",
     "acc-1",
@@ -127,13 +121,11 @@ describe("PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2；不
         recurrence_interval: 1,
       },
     });
-    // 先建档（拿 policy_id）再建协议（引用该 id）
     expect(createPolicyCallTrack()).toBeLessThan(
       mockInvoke.mock.calls.findIndex(([cmd]) => cmd === "create_scheduled_transaction"),
     );
   });
 
-  /** create_policy 在全部 invoke 调用中的序号。 */
   function createPolicyCallTrack(): number {
     return mockInvoke.mock.calls.findIndex(([cmd]) => cmd === "create_policy");
   }
@@ -192,9 +184,6 @@ describe("PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2；不
 });
 
 describe("PolicyFormModal 保单弹窗排版统一（issue #636 / spec #630）", () => {
-  /** 断言弹窗卡片：宽度归 md 档（480px）+ 无边框（AppModal 默认，调用点不再显式声明）。
-   *  弹窗卡片 teleport 到 body，本测试直接 mount 组件、body 上应恰有一张卡片
-   *  （先例 PhysicalAssetsView.test.ts 的 visibleModalCard，此处无视图自有卡片故免过滤）。 */
   function expectModalCard(width: string) {
     const cards = [...document.querySelectorAll<HTMLElement>(".n-card")];
     expect(cards, "当前应恰有一个弹窗卡片").toHaveLength(1);

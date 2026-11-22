@@ -1,5 +1,3 @@
-//! 路由表与 HTTP 服务器启动：端点注册单点（与 OpenAPI 契约同源维护）。
-
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
@@ -79,13 +77,7 @@ pub fn build_router(state: ApiState) -> Router {
             "/api/v1/import/knowledge/investment",
             get(import_investment_knowledge_handler),
         )
-        // 注意：axum 的 `Router::layer` 只包裹“当前已有的” route——若在声明任何 route
-        // 之前调用，会对空路由集合空操作（`route_layer` 则会在无 route 时 panic，强制先
-        // 声明 route 再加层）。所以 `TraceLayer` 必须放在所有 route 声明之后，否则其请求
-        // span 空转，导入路径 SQL 的归因不生效（issue #44）。
         .layer(TraceLayer::new_for_http())
-        // 加密锁定门（issue #570 / ADR-0075 决策 5）：置于最外层，锁定期间
-        // 除契约自举端点外一律返回码化错误，请求不进入任何 handler。
         .layer(middleware::from_fn_with_state(
             state.clone(),
             startup_gate_middleware,
@@ -93,17 +85,11 @@ pub fn build_router(state: ApiState) -> Router {
         .with_state(state)
 }
 
-/// 启动门中间件（加密锁定门 + 启动失败门，issue #570 / #601）：除契约
-/// 自举端点（标准 OpenAPI 与紧凑方言，issue #839）外的全部端点在锁定期间
-/// 返回码化错误 `encryption.locked`、在启动失败期间返回码化错误
-/// `boot.db-unreadable`——AI 导入 HTTP 面在解锁前/库不可用时不可用；标志
-/// 翻转（IPC 壳命令统一置位）后请求照常放行，契约面零变化。
 async fn startup_gate_middleware(
     State(state): State<ApiState>,
     req: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    // 契约自举端点：不含用户数据、不触 DB，锁定/启动失败期间照常可用。
     const BOOTSTRAP_PATHS: [&str; 2] = ["/api/v1/openapi.json", "/api/v1/contract"];
     if !BOOTSTRAP_PATHS.contains(&req.uri().path()) {
         if state.lock_gate.is_locked() {
@@ -125,7 +111,6 @@ pub fn start_http_server(
     boot_gate: ledger_infra::db::boot::BootFailureGate,
 ) {
     std::thread::spawn(move || {
-        // B 类豁免（ADR-0060）：HTTP 壳启动期创建 Tokio 运行时，失败即无法运行。
         #[allow(clippy::expect_used)]
         let rt = tokio::runtime::Runtime::new().expect("创建 Tokio 运行时失败");
         rt.block_on(async move {
@@ -138,13 +123,11 @@ pub fn start_http_server(
                 lock_gate,
                 boot_gate,
             });
-            // B 类豁免（ADR-0060）：启动期绑定 9527 端口失败即无法运行。
             #[allow(clippy::expect_used)]
             let listener = tokio::net::TcpListener::bind("127.0.0.1:9527")
                 .await
                 .expect("绑定 9527 端口失败");
             println!("Ledger API 服务已启动: http://127.0.0.1:9527");
-            // B 类豁免（ADR-0060）：服务器异常退出属启动期致命故障，fail loud。
             #[allow(clippy::expect_used)]
             axum::serve(listener, router)
                 .await

@@ -2,17 +2,6 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { setAdapter, removeAdapter } from "@vanilla-extract/css/adapter";
 import { setFileScope, endFileScope } from "@vanilla-extract/css/fileScope";
 
-/**
- * 弹窗移动档 CSS 产出物（issue #844 / ADR-0088 决策 8）：移动档全屏化分支的
- * 「标签上置 / 按钮行底部固定 / 内容滚动」是纯 CSS 声明（收口在 AppModal 旁路
- * 样式文件），jsdom 不消费样式表、组件测试只断言 DOM 分支钩子（见
- * AppModal.test.ts），CSS 声明本身经 vanilla-extract 官方 adapter 接缝捕获断言
- * ——与主题合同测试同一接缝形态（theme-contract.test.ts 先例）。
- *
- * app-modal.css.ts 必须在装好捕获 adapter 之后动态导入：globalStyle 在模块求值
- * 期产出 CSS，静态导入会先于 adapter 装配完成求值。
- */
-
 let cssModule: typeof import("../app-modal.css.ts") | null = null;
 type CapturedBlock = { type: string; selector?: string; rule?: Record<string, unknown> };
 let capturedBlocks: CapturedBlock[] = [];
@@ -28,8 +17,6 @@ beforeAll(async () => {
     getIdentOption: () => "short",
   };
   setAdapter(adapter);
-  // vitest 不挂 ve 插件（见 vitest.config.ts）：运行时求值需显式提供 file scope，
-  // 指向真实模块路径使标识符与构建同构。
   setFileScope("packages/ui-kit/src/app-modal.css.ts");
   try {
     cssModule = await import("../app-modal.css.ts");
@@ -40,7 +27,6 @@ beforeAll(async () => {
   capturedBlocks = captured;
 });
 
-/** 取「选择器含片段」的首个捕获块 */
 function blockOf(fragment: string): CapturedBlock {
   const block = capturedBlocks.find((b) => b.selector?.includes(fragment));
   expect(block, `应存在选择器含 ${fragment} 的 CSS 块`).toBeDefined();
@@ -94,7 +80,6 @@ describe("弹窗移动档 CSS 产出物（issue #844，收口 app-modal.css.ts�
     expect(blockOf("form.n-form:not(.n-form--inline) > .n-space > :last-child").rule).toMatchObject(
       { marginTop: "auto" },
     );
-    // 无表单内容形态（确认框族：说明段 + 按钮行的裸节奏容器）
     expect(blockOf(".n-card-content > .n-space > :last-child").rule).toMatchObject({
       marginTop: "auto",
     });

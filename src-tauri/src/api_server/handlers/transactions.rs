@@ -1,14 +1,3 @@
-//! 交易端点：列表（过滤 + 分页 + HTTP 缺省上限）/ 批量创建（默认去重）/ 全字段替换 / 软删除。
-//!
-//! 写端点经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
-//! 事务、置脏、信号内化单点，「即建商户」证据随闭包返回必达；读端点经
-//! `run_db`（形状乙）。
-//!
-//! 列表读端点的 HTTP 缺省上限（issue #1631）：缺省不再返回全部，等价注入
-//! `page_size = 上限`（`page` 缺省 1）——显式 `page_size` / `limit` 超上限或负值报 400 码化错误。校验住本层，
-//! 与 IPC 共用的域实现（`list_transactions_internal`）零改动——IPC 缺省全量
-//! 语义不变（ADR-0008 原决策辖 IPC；HTTP 半边修订见其修订注记）。
-
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -26,17 +15,8 @@ use ledger_transaction::{
     TransactionListResult, UpdateTransactionInput,
 };
 
-/// HTTP 列表单请求行数上限：缺省分页大小与显式 `page_size` / `limit` 共用同一
-/// 上限（issue #1631）。取值对齐既有上限口径——标的搜索端点「上限收敛 100」
-/// （AI 上下文预算可控）与前端页大小闭集 10/20/50/100 的最大值。
 const HTTP_MAX_PAGE_SIZE: usize = 100;
 
-/// HTTP 列表入参行数守卫（issue #1631，只辖 HTTP）：缺省（`page_size` 与
-/// `limit` 均未携带）注入 `page_size = 上限`（`page` 缺省 1，故缺省即首页；
-/// 已携 `page` 时返回该页 × 上限），不再整表序列化；显式超上限或
-/// 负值 `limit`（SQLite 负值无上限语义仅限 IPC）报 400 码化错误——拒绝而非
-/// 静默截断，截断会造成读回少行不自知，AI 导入按码自纠（ADR-0050）。只携
-/// `limit` 时不注入缺省页（保留「取前 N 条」与分页互斥的既有语义，ADR-0008）。
 fn enforce_http_page_bounds(
     mut filter: TransactionListFilter,
 ) -> Result<TransactionListFilter, AppError> {
@@ -132,9 +112,6 @@ pub async fn batch_create_transactions_handler(
     State(emitter): State<EmitterSlot>,
     Json(body): Json<TransactionBatchInput>,
 ) -> Result<Json<Vec<CreateTransactionResult>>, AppError> {
-    // 批次事务由 run 自持（issue #245），提交点置脏/到期检查单点；整批回滚不置脏
-    // 由写入口闭包失败语义保证。批内任一行即建商户才发参考失效信号
-    //（修复 HTTP 导入即建商户后前端商户字典陈旧，issue #331）。
     let results = write_entry(
         "POST /api/v1/transactions/batch",
         conn,
@@ -173,8 +150,6 @@ pub async fn update_transaction_handler(
     Path(id): Path<String>,
     Json(input): Json<UpdateTransactionInput>,
 ) -> Result<Json<Transaction>, AppError> {
-    // 修改与读回同一写闭包，提交点置脏/检查单点；仅即建商户发参考失效信号
-    //（证据随闭包返回必达，ADR-0073）。
     let updated = write_entry(
         "PUT /api/v1/transactions/{id}",
         conn,
@@ -216,8 +191,6 @@ pub async fn delete_transaction_handler(
     State(emitter): State<EmitterSlot>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    // 零信号写端点同样经统一写入口并传发射槽（ADR-0073 决策 3）：映射单点
-    // 当前判定零信号、发射循环自然零次，未来补信号时天然生效。
     write_entry(
         "DELETE /api/v1/transactions/{id}",
         conn,

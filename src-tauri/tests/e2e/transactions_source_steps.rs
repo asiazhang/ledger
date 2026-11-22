@@ -1,11 +1,3 @@
-//! 交易来源字段契约 BDD 步骤（spec #704 / issue #706 tracer bullet：保单分支）。
-//!
-//! 断言口径是命令输出本身（好测试只测外部行为）：列表断言经
-//! `list_transactions_internal` 现查（与列表命令同一排序：date DESC,
-//! created_at DESC, id DESC），搜索断言读 `search_steps.rs` 的
-//! `world.txn.last_search` 快照。保单/商户/账户 Given 复用 `policies_steps.rs` /
-//! `merchants_steps.rs` / `accounts_steps.rs` 已注册步骤。
-
 use cucumber::then;
 use rusqlite::params;
 
@@ -17,7 +9,6 @@ use ledger_transaction::{
 
 use crate::world::LedgerWorld;
 
-/// 按保单号查保单 id（场景内保单号唯一）。
 fn policy_id_by_number(world: &LedgerWorld, number: &str) -> String {
     world_conn!(world)
         .query_row(
@@ -28,7 +19,6 @@ fn policy_id_by_number(world: &LedgerWorld, number: &str) -> String {
         .unwrap_or_else(|_| panic!("来源断言：保单 {number} 应已存在"))
 }
 
-/// 断言来源 = 保单来源（类型/实体 id/险种名/状态标注）：列表与搜索侧共用。
 fn assert_policy_source(
     world: &LedgerWorld,
     source: &ledger_transaction::TransactionSource,
@@ -50,7 +40,6 @@ fn assert_policy_source(
     assert_eq!(source.status, expected_status, "来源状态标注不匹配");
 }
 
-/// 断言第 index 条列表行来源 = 保单来源（类型/实体 id/险种名），并核对状态标注。
 fn assert_list_nth_policy_source(
     world: &mut LedgerWorld,
     index: usize,
@@ -97,8 +86,6 @@ fn list_nth_source_deleted_policy(
     );
 }
 
-/// 断言来源 = 计划来源（issue #707：类型/实体 id/计划名/状态标注）：列表与搜索
-/// 侧共用。计划按备注定位（场景内备注唯一），展示名 = 计划名（备注）。
 fn assert_plan_source(
     world: &LedgerWorld,
     source: &TransactionSource,
@@ -127,14 +114,12 @@ fn assert_plan_source(
     assert_eq!(source.status, expected_status, "来源状态标注不匹配");
 }
 
-/// 断言目标行来源所属快照：交易列表现查或搜索结果快照。
 #[derive(Clone, Copy)]
 enum NthList {
     List,
     Search,
 }
 
-/// 取第 index 条行的来源（列表或搜索快照；无来源即 panic，由调用方断言语义）。
 fn nth_source(world: &mut LedgerWorld, list: NthList, index: usize) -> TransactionSource {
     let source = match list {
         NthList::List => {
@@ -157,7 +142,6 @@ fn nth_source(world: &mut LedgerWorld, list: NthList, index: usize) -> Transacti
         .unwrap_or_else(|| panic!("第 {index} 条交易应携带来源，实际为空"))
 }
 
-/// 断言第 index 条行来源 = 指定形态计划来源（列表或搜索快照）。
 fn assert_nth_plan_source(
     world: &mut LedgerWorld,
     list: NthList,
@@ -170,7 +154,6 @@ fn assert_nth_plan_source(
     assert_plan_source(world, &source, kind, note, expected_status);
 }
 
-/// 断言目标行来源所属行（列表或搜索快照）。
 #[then(expr = "交易列表第 {int} 条来源应为分期计划 备注 {string}")]
 fn list_nth_source_installment(world: &mut LedgerWorld, index: usize, note: String) {
     assert_nth_plan_source(
@@ -219,7 +202,6 @@ fn list_nth_source_cancelled_subscription(world: &mut LedgerWorld, index: usize,
     );
 }
 
-/// 无备注计划：来源仍在（类型/实体 id 在场），展示名为空串（前端按类型名兜底）。
 #[then(expr = "交易列表第 {int} 条来源应为无备注订阅计划 展示名为空")]
 fn list_nth_source_subscription_without_note(world: &mut LedgerWorld, index: usize) {
     let result = list_transactions_internal(&world_conn!(world), &TransactionListFilter::default())
@@ -317,9 +299,6 @@ fn search_nth_no_source(world: &mut LedgerWorld, index: usize) {
     );
 }
 
-// --- 物品分支（issue #708）：溯源指针反查 ---
-
-/// 按名称查未删除物品 id（场景内物品名唯一）。
 fn item_id_by_name(world: &LedgerWorld, name: &str) -> String {
     world_conn!(world)
         .query_row(
@@ -330,8 +309,6 @@ fn item_id_by_name(world: &LedgerWorld, name: &str) -> String {
         .unwrap_or_else(|_| panic!("来源断言：物品 {name} 应已存在"))
 }
 
-/// 断言来源 = 物品来源（issue #708：类型/实体 id/物品名/可空状态）：
-/// 列表与搜索侧共用。
 fn assert_item_source(
     world: &LedgerWorld,
     source: &TransactionSource,
@@ -371,12 +348,6 @@ fn search_nth_source_item(world: &mut LedgerWorld, index: usize, name: String) {
     assert_item_source(world, &source, &name, None);
 }
 
-// --- 标的分支（issue #709）：证券交易记录按生成交易 id 反查 ---
-
-/// 断言来源 = 标的来源（issue #709：类型/实体 id/展示名/状态）：列表与搜索
-/// 侧共用。标的按代码定位（场景内代码唯一）；展示名 = 代码 + 名称空格连接
-/// （随走势页签标签惯例），无名称退化为裸代码；标的字典无软删（被流水引用
-/// 的标的不可删），恒无状态标注。
 fn assert_instrument_source(
     world: &LedgerWorld,
     source: &TransactionSource,

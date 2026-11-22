@@ -1,8 +1,3 @@
-//! 物品（Item）BDD 步骤 · 更新主题（issue #117）：修改物品与修改路径校验。
-//!
-//! 断言修改读回、版本递增、审计字段（created_at）保留、备注清除语义、
-//! 修改后每天成本按新口径重算（成本分解三元组）、修改失败不落库不发信号。
-
 use cucumber::{then, when};
 
 use ledger_infra::error::AppError;
@@ -14,7 +9,6 @@ use crate::common::assert_last_error_contains;
 use crate::items_common::build_input;
 use crate::world::LedgerWorld;
 
-/// 填备注：空字符串规为清除（None），其余原样。
 fn with_note(mut input: ItemInput, note: &str) -> ItemInput {
     input.note = if note.is_empty() {
         None
@@ -24,7 +18,6 @@ fn with_note(mut input: ItemInput, note: &str) -> ItemInput {
     input
 }
 
-/// 修改最近创建的物品（`world.item.last_item_id`）并要求成功；备注空字符串规为清除（None）。
 #[when(
     expr = "修改物品名称为 {string} 购买日期 {string} 总成本 {int} 币种 {string} 备注为 {string}"
 )]
@@ -54,7 +47,6 @@ fn update_item(
     }
 }
 
-/// 修改物品（购买日期 = 今天前 N 天；日期口径同创建步骤，保证天数可静态断言）。
 #[when(
     expr = "修改物品名称为 {string} 今天前 {int} 天购买 总成本 {int} 币种 {string} 备注为 {string}"
 )]
@@ -72,7 +64,6 @@ fn update_item_days_ago(
     update_item(world, name, date, cost_cents, currency, note);
 }
 
-/// 尝试修改物品并捕获错误（供「应返回错误」断言，与创建场景同一 seam）。
 #[when(
     expr = "尝试修改物品名称为 {string} 购买日期 {string} 总成本 {int} 币种 {string} 备注为 {string}"
 )]
@@ -85,7 +76,6 @@ fn try_update_item(
     note: String,
 ) {
     let mut signals = 0;
-    // 不存在场景传固定假 id，真实走到 query_one 落空的 NotFound 路径
     let id = world
         .item
         .last_item_id
@@ -140,7 +130,6 @@ fn check_item_created_at_preserved(world: &mut LedgerWorld, n: usize) {
     );
 }
 
-/// 成本分解断言：分子 ÷ 天数 = 每天成本（详情视图展示的口径三元组）。
 #[then(expr = "第 {int} 件物品成本分解分子应为 {int} 分 ÷ {int} 天 = 每天成本 {float}")]
 fn check_item_cost_breakdown(
     world: &mut LedgerWorld,

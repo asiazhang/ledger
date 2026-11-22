@@ -7,14 +7,8 @@ import type {
   PassphraseStrengthTier,
 } from "@ledger/utils/passphrase-strength";
 
-// 口令强度条（issue #685，词汇表「口令强度」）：纯展示组件——色条＋四档文字，
-// 消费 utils/passphrase-strength.ts 的评估结果，不做任何判定。
-// 颜色用组件库语义色（不复用业务语义色）：弱 error / 中 warning / 强 success /
-// 极强 info（以 info 区分于强的 success）；不显示破解时间等伪精确数值。
-
 const props = defineProps<{ assessment: PassphraseStrengthAssessment }>();
 
-/** 档位 → 组件库语义色与文案 key。 */
 const TIER_VIEW: Record<
   PassphraseStrengthTier,
   {
@@ -54,7 +48,6 @@ const view = computed(() => TIER_VIEW[props.assessment.tier]);
   display: flex;
   align-items: center;
   gap: 8px;
-  /* 上移抵消 NFormItem 底部留白，让色条贴住其所属输入框（视觉归属，非间距语义） */
   margin-top: -10px;
 }
 

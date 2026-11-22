@@ -19,7 +19,6 @@ function press(
   return new KeyboardEvent("keydown", { key, bubbles: true, ...mods });
 }
 
-/** 在指定元素上触发 keydown（event.target 即该元素），返回该事件供 isEditableTarget 断言。 */
 function pressOn(target: Element, key = "a"): KeyboardEvent {
   const e = new KeyboardEvent("keydown", { key, bubbles: true });
   target.dispatchEvent(e);
@@ -65,9 +64,6 @@ describe("matchCreateShortcut 真值表", () => {
   );
 
   it.each(["A", "r", "x", "c", "1", "Escape", "Enter", " "])("非映射裸键 %s 不命中", (key) => {
-    // 大写 A（如 CapsLock）不命中：精确匹配小写键位
-    // r 无键位：退款不占键位
-    // c 无键位：convert 无手工录入入口（ADR-0106 决策 10 / #1048）
     expect(matchCreateShortcut(press(key))).toBeNull();
   });
 });
@@ -196,7 +192,6 @@ describe("useCreateShortcuts", () => {
       window.dispatchEvent(press("a"));
       expect(open).not.toHaveBeenCalled();
 
-      // watcher 回调随预刷新队列异步执行：换轴后先等 flush 再按键
       setFakeMedia({ hover: "hover", pointer: "fine" });
       await flushPromises();
       window.dispatchEvent(press("a"));

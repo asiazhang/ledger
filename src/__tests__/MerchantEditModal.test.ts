@@ -15,7 +15,6 @@ const mockMerchant: Merchant = {
   is_deleted: false,
 };
 
-/** NModal 内容传送至 document.body：直接在 body 上查询。 */
 function findInputByPlaceholder(placeholder: string): DOMWrapper<HTMLInputElement> {
   const el = document.body.querySelector(`input[placeholder="${placeholder}"]`);
   expect(el, `input[placeholder=${placeholder}] 应存在`).not.toBeNull();

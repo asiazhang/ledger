@@ -12,7 +12,6 @@ import type {
   TransferFormState,
 } from "@/transaction/transaction-input";
 
-/** 本地日历日构造时间戳（按本地时区分量构造，读取也走本地分量——任何机器时区下往返一致） */
 function localTs(year: number, month1: number, day: number, hour = 12, minute = 0): number {
   return new Date(year, month1 - 1, day, hour, minute).getTime();
 }
@@ -118,8 +117,6 @@ describe("buildTransferInput", () => {
     });
   });
 
-  // 借贷可关联商户（issue #875 / ADR-0092）：装配器只收已解析的 merchant_id、覆写
-  // 矩阵占位；普通转账表单不暴露输入位，但编辑时表单层回填原商户即由此携带。
   it("携带已解析商户 id：merchant_id 覆写矩阵占位", () => {
     const input = buildTransferInput({ ...transferState, merchantId: "m-9" });
     expect(input.merchant_id).toBe("m-9");
@@ -136,9 +133,6 @@ describe("buildTransferInput", () => {
     );
   });
 
-  // 借贷四方向（issue #374）：借贷录入是转账表单的变体，装配产物与同形状转账完全
-  // 同构——方向 toggle 只影响双账户填法（转出/转入各属哪侧），kind 恒为 transfer、
-  // 装配器无任何借贷分支（方向派生收口 domain 层借贷模块，不在此接缝）。
   it.each([
     ["lend", "acc-fund", "acc-recv"],
     ["collect", "acc-recv", "acc-fund"],
@@ -253,7 +247,7 @@ describe("buildTradeInput", () => {
       date: "2024-06-15",
       instrument_id: "ins-1",
       quantity: 100,
-      price_cents: 123400, // 单价为万分之一元刻度：12.34 元 → 123400（ADR-0038）
+      price_cents: 123400,
       fee_cents: 550,
     });
   });
@@ -261,18 +255,16 @@ describe("buildTradeInput", () => {
   it("出资账户（issue #936 / #938 / ADR-0096）：buy/sell 表单选择落 funding_account_id，缺省 null（编辑全字段替换不丢字段）", () => {
     const input = buildTradeInput({ ...buyState, fundingAccountId: "bank-1" });
     expect(input.funding_account_id).toBe("bank-1");
-    // sell 同款：回卡卖出（记 + 于出资账户）与买入共用同一装配路径，wire 形状一致
     expect(
       buildTradeInput({ ...buyState, kind: "sell", fundingAccountId: "bank-1" }).funding_account_id,
     ).toBe("bank-1");
-    // 不填 = 维持余额买卖语义（结算账户 = 投资账户），wire 显式 null 而非缺省缺字段
     expect(buildTradeInput(buyState).funding_account_id).toBeNull();
   });
 
   it("出资账户与基金形态正交（issue #936）：金额置零覆写不受影响——确认单金额仍权威、单价不落 wire", () => {
     const input = buildTradeInput({ ...fundBuyState, fundingAccountId: "bank-1" });
     expect(input.funding_account_id).toBe("bank-1");
-    expect(input.amount_cents).toBe(100000); // 矩阵占位 0 仍被权威金额覆写
+    expect(input.amount_cents).toBe(100000);
     expect(input.price_cents).toBeNull();
   });
 
@@ -311,7 +303,7 @@ describe("buildTradeInput", () => {
   it("基金形态（issue #302）：确认单金额权威落 amount_cents、单价不落 wire（price_cents null）", () => {
     expect(buildTradeInput(fundBuyState)).toEqual({
       kind: "buy",
-      amount_cents: 100000, // 确认单整分金额（1000 元），权威不被单价舍入污染
+      amount_cents: 100000,
       currency_code: "CNY",
       account_id: "inv-1",
       to_account_id: null,
@@ -325,7 +317,7 @@ describe("buildTradeInput", () => {
       date: "2024-06-15",
       instrument_id: "ins-fund",
       quantity: 987.6543,
-      price_cents: null, // 单价由后端按（金额 ∓ 费用）÷ 份额反算
+      price_cents: null,
       fee_cents: 150,
     });
   });

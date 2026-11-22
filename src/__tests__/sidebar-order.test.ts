@@ -31,12 +31,6 @@ import type {
 import type { DropdownOption } from "naive-ui";
 import { VIEW_STATE_KEYS, saveContainmentLists } from "@ledger/utils/view-state";
 
-// 侧栏排序 store 接口测试（issue #524/#549：排序状态机迁入 sidebar-order store）。
-// 「重启」惯用法 = setActivePinia(createPinia())：store 首次实例化即启动读路径
-//（读 view_state:* 两键经解析防御），新 pinia = 新一次启动。
-// 键位带推导纯逻辑测试留守 useViewShortcuts.test.ts（经 store 装配），此处不重复。
-
-/** 重启：换新 pinia，下一次 useSidebarOrderStore() 即新一次启动读路径 */
 function reboot() {
   setActivePinia(createPinia());
 }
@@ -98,7 +92,6 @@ describe("侧栏分组常量（issue #359 / ADR-0051；#473 记账组主项三�
     expect(groupOfView("dashboard")).toBeNull();
     expect(groupOfView("ai")).toBeNull();
     expect(groupOfView("settings")).toBeNull();
-    // 出厂收纳种子不跨组（ADR-0063 决策 4）：词法归属出厂组，移回侧栏后即以该组主项身份在册
     expect(groupOfView("scheduled")).toBe("bookkeeping");
     expect(groupOfView("merchants")).toBe("bookkeeping");
     expect(groupOfView("policies")).toBe("assets");
@@ -108,7 +101,6 @@ describe("侧栏分组常量（issue #359 / ADR-0051；#473 记账组主项三�
   });
 });
 
-/** 默认组内序（= SIDEBAR_GROUPS 成员展开）：解析/持久化断言复用 */
 const DEFAULT_ORDERS: SidebarGroupOrders = {
   bookkeeping: ["transactions", "accounts", "budget"],
   assets: ["investments", "items", "savingsGoals"],
@@ -266,8 +258,8 @@ describe("组内收纳清单：出厂种子与解析防御（issue #472/#473 / A
       bookkeeping: ["policies"],
     };
     const parsed = parseContainmentLists(raw);
-    expect(parsed.assets).toEqual(["policies", "physicalAssets", "insurers"]); // 合法名只剩保单，实物资产与保司作缺失出厂成员补尾
-    expect(parsed.bookkeeping).toEqual(["scheduled", "merchants"]); // 保单是他组成员，清单回出厂种子
+    expect(parsed.assets).toEqual(["policies", "physicalAssets", "insurers"]);
+    expect(parsed.bookkeeping).toEqual(["scheduled", "merchants"]);
   });
 
   it("本组主项名合法（issue #474 用户移入）：清单序保留，缺失种子仍按出厂序补尾", () => {
@@ -417,7 +409,6 @@ describe("store 启动读路径（issue #269/#359/#472：读 view_state:* 两键
     const store = useSidebarOrderStore();
     expect(store.sidebarGroupOrders).toEqual(DEFAULT_ORDERS);
     expect(store.sidebarContainment).toEqual(parseContainmentLists(null));
-    // 标量 / 损坏 JSON（loadLocal 回 null）同路径
     localStorage.setItem(VIEW_STATE_KEYS.sidebarOrder, "123");
     localStorage.setItem(VIEW_STATE_KEYS.sidebarContainment, "not-json{");
     reboot();
@@ -514,7 +505,6 @@ describe("moveArrangeable（组内移动纯函数，issue #270/#359）", () => {
   });
 });
 
-/** 菜单选项测试取值助手：把 DropdownOption 收窄到本菜单用到的字段 */
 function row(o: DropdownOption) {
   return o as { label?: string; key?: string; disabled?: boolean; type?: string };
 }
@@ -555,7 +545,6 @@ describe("buildSidebarSortMenuOptions（排序菜单选项构建纯函数，含�
       );
     expect(moveKeys).toEqual(["up", "down", "top", "bottom"]);
     for (const k of moveKeys) expect(isSidebarSortAction(k)).toBe(true);
-    // 每个菜单 key 直接可作为动作施加，效果与菜单语义一致（key 即 action）
     expect(moveArrangeable(bookkeeping, "accounts", "up")[0]).toBe("accounts");
     expect(moveArrangeable(bookkeeping, "budget", "bottom").at(-1)).toBe("budget");
   });
@@ -674,7 +663,6 @@ describe("moveBackToSidebar（移回纯函数，issue #475：移回 = 清单删�
   it("成员不在清单（含空清单组）：原样返回内容（no-op 语义）", () => {
     expect(moveBackToSidebar(lists, "insights", "search")).toEqual(lists);
     expect(moveBackToSidebar(lists, "bookkeeping", "transactions")).toEqual(lists);
-    // 同引用是 no-op 语义的一半：返回原对象 → 调用方 ref 赋值不触发多余响应式更新
     expect(moveBackToSidebar(lists, "insights", "search")).toBe(lists);
   });
 });
@@ -693,8 +681,6 @@ describe("buildTabContextMenuOptions（「更多」页页签右键菜单构建�
     expect(opts[0]!.key).toBe("backToSidebar");
     expect(opts[0]!.disabled).toBe(true);
     expect(typeof opts[0]!.label).toBe("function");
-    // label 渲染函数实产 vnode：提示行的折行样式是刻意排版决策（white-space:normal
-    // 覆写 label 元素的 nowrap、max-width 收窄行宽，见函数注释），走样即红
     const rendered = (opts[0]!.label as () => unknown)() as {
       children: { props?: { style?: string } }[];
     };
@@ -703,10 +689,6 @@ describe("buildTabContextMenuOptions（「更多」页页签右键菜单构建�
     expect(hintDiv.props?.style).toContain("max-width:220px");
   });
 });
-
-// ---------------------------------------------------------------------------
-// 四条写路径：点选即写、双存储同步、边界 no-op 不写（行为等价迁移，纪律不变）。
-// ---------------------------------------------------------------------------
 
 describe("applySidebarSort 写路径（issue #270/#359：组内点选即重排、立即持久化、恢复默认）", () => {
   const ORDER_KEY = VIEW_STATE_KEYS.sidebarOrder;
@@ -750,7 +732,6 @@ describe("applySidebarSort 写路径（issue #270/#359：组内点选即重排�
     const store = useSidebarOrderStore();
     store.applySidebarSort("items", "top");
     store.applySidebarSort("search", "up");
-    // 直接读存储做解析往返（等价启动读路径）
     const raw = JSON.parse(localStorage.getItem(ORDER_KEY)!);
     expect(parseGroupOrders(raw)).toEqual({ ...store.sidebarGroupOrders });
   });
@@ -762,11 +743,9 @@ describe("applySidebarSort 写路径（issue #270/#359：组内点选即重排�
     store.resetSidebarOrder();
     expect(localStorage.getItem(ORDER_KEY)).toBeNull();
     expect(store.sidebarGroupOrders).toEqual(parseGroupOrders(null));
-    // 恢复后可再次自定义
     store.applySidebarSort("accounts", "bottom");
     expect(localStorage.getItem(ORDER_KEY)).not.toBeNull();
     expect(store.sidebarGroupOrders.bookkeeping.at(-1)).toBe("accounts");
-    // 再恢复，仍回默认
     store.resetSidebarOrder();
     expect(store.sidebarGroupOrders).toEqual(parseGroupOrders(null));
   });
@@ -848,7 +827,7 @@ describe("右键「移回侧栏」写路径（issue #475：点选即清单删除
 
   it("组未满时移回：种子退出收纳清单 + 落本组主项末位，双存储立即持久化", () => {
     const store = useSidebarOrderStore();
-    store.applyMoveIntoMore("transactions"); // 腾位：记账组主项剩 2（出厂满员须先移出一个主项）
+    store.applyMoveIntoMore("transactions");
     store.applyMoveBackToSidebar("scheduled");
     expect(store.sidebarContainment.bookkeeping).toEqual(["merchants", "transactions"]);
     expect(store.sidebarGroupOrders.bookkeeping).toEqual(["accounts", "budget", "scheduled"]);
@@ -860,7 +839,7 @@ describe("右键「移回侧栏」写路径（issue #475：点选即清单删除
 
   it("组满拒写（运行时硬上限兜底，菜单置灰为第一道防线）：满员组移回 no-op 不写存储", () => {
     const store = useSidebarOrderStore();
-    store.applyMoveBackToSidebar("scheduled"); // 记账出厂满员
+    store.applyMoveBackToSidebar("scheduled");
     expect(localStorage.getItem(ORDER_KEY)).toBeNull();
     expect(localStorage.getItem(CONTAINMENT_KEY)).toBeNull();
     expect(store.sidebarContainment.bookkeeping).toEqual(["scheduled", "merchants"]);
@@ -876,7 +855,7 @@ describe("右键「移回侧栏」写路径（issue #475：点选即清单删除
 
   it("移回资产组成员：需先腾位（资产组随储蓄目标加入出厂满员），保单落资产组主项末位", () => {
     const store = useSidebarOrderStore();
-    store.applyMoveIntoMore("investments"); // 腾位：资产组出厂满员（投资、物品、储蓄目标）
+    store.applyMoveIntoMore("investments");
     store.applyMoveBackToSidebar("policies");
     expect(store.sidebarContainment.assets).toEqual(["physicalAssets", "insurers", "investments"]);
     expect(store.sidebarGroupOrders.assets).toEqual(["items", "savingsGoals", "policies"]);
@@ -939,7 +918,7 @@ describe("右键「移回侧栏」写路径（issue #475：点选即清单删除
   it("isViewContained（收纳在册判定）：出厂种子在册；移回后出册（/policies 路由守卫消费面）", () => {
     const store = useSidebarOrderStore();
     expect(store.isViewContained("policies")).toBe(true);
-    store.applyMoveIntoMore("investments"); // 腾位：资产组随储蓄目标加入出厂满员
+    store.applyMoveIntoMore("investments");
     store.applyMoveBackToSidebar("policies");
     expect(store.isViewContained("policies")).toBe(false);
     expect(store.isViewContained("physicalAssets")).toBe(true);

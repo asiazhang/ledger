@@ -1,8 +1,9 @@
-/// <reference types="vite/client" />
+import type {} from "vite/client";
 
-// 构建期由 vite.config.ts define 注入（见 packages/utils/src/git-info.ts）
-declare const __GIT_SHA__: string;
-declare const __GIT_DIRTY__: boolean;
+declare global {
+  const __GIT_SHA__: string;
+  const __GIT_DIRTY__: boolean;
+}
 
 declare module "*.vue" {
   import type { DefineComponent } from "vue";

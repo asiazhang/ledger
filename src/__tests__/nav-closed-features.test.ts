@@ -9,9 +9,6 @@ import { routes } from "@/router";
 import { useFeatureToggleStore } from "@/settings/feature-toggles";
 import { VIEW_STATE_KEYS } from "@ledger/utils/view-state";
 
-// 功能开关的导航层过滤（issue #1242 / ADR-0116 决策 3）：关闭只隐藏入口、
-// 不改写收纳清单与侧栏顺序；桌面侧栏与移动抽屉消费同一份菜单构建。
-
 async function mountApp() {
   wireInvokeSeam({ defaults: { get_boot_status: { phase: "ready", error_code: null } } });
   const router = createRouter({ history: createMemoryHistory(), routes });

@@ -1,23 +1,3 @@
-//! S3 兼容对象存储通道后端（issue #1216 / ADR-0091 决策 1）。
-//!
-//! 对象键 = [`S3Config::prefix`] + 逻辑通道路径；对象存储没有目录概念，
-//! [`Transport::ensure_dir`] 因此是无副作用的空操作。读写经官方 SDK 走 SigV4
-//! 签名，支持自定义端点与 path-style / virtual-host 两种寻址。
-//!
-//! 兼容优先：客户端显式设置请求校验和 `WhenRequired`、响应校验和
-//! `WhenRequired`——默认的 `WhenSupported` 会给上传追加 AWS 专有校验和扩展，
-//! 部分 S3 兼容服务会直接拒绝。该策略在构建配置上显式落地，不读取
-//! `AWS_REQUEST_CHECKSUM_CALCULATION` 等环境变量。
-//!
-//! 同步桥接：Transport 是同步接口，SDK 只有异步门面。本后端自持一条专用线程
-//! 与 current-thread Tokio runtime，调用方经通道提交任务并阻塞等待结果——
-//! 不把 `block_on` 跑在调用方线程上，因此调用方即使已在 Tokio 上下文
-//! （runtime 线程或 `spawn_blocking`）中调用也不会嵌套 runtime 而 panic。
-//! 线程随传输句柄 Drop 退出。runtime 的**构造与销毁都收在桥接线程内**、启动
-//! 失败经握手 fail loud 回传（issue #1405）：阻塞资源不在调用方线程出现，调用方
-//! 处于异步上下文（tokio worker / `block_on`）也合法——这是 #1403 的「阻塞资源
-//! 只在异步上下文之外构造、使用与销毁」纪律（ADR-0125）在本桥上的落点。
-
 use std::sync::mpsc;
 use std::thread;
 
@@ -38,33 +18,21 @@ use super::{
     target_missing_error, validate_logical_path,
 };
 
-/// 触发分片上传的对象体积阈值。S3 单对象可整体 PUT，但大文件（检查点快照）
-/// 走分片上传可避免单请求体过大；阈值取 8 MiB（S3 最小分片 5 MiB 之上）。
 const MULTIPART_THRESHOLD_BYTES: usize = 8 * 1024 * 1024;
 
-/// 分片大小。末片可小于该值，其余分片均 ≥ 5 MiB，满足 S3 约束。
 const MULTIPART_PART_BYTES: usize = 8 * 1024 * 1024;
 
-/// S3 连接配置（凭据与根前缀；持久化与配置分派归 #1217 壳层设置面）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct S3Config {
-    /// 自定义端点（如 `https://s3.example.com` 或本地兼容服务地址）。
     pub endpoint: String,
-    /// SigV4 签名区域。
     pub region: String,
-    /// 目标桶名。
     pub bucket: String,
-    /// Access Key ID。
     pub access_key: String,
-    /// Secret Access Key。
     pub secret_key: String,
-    /// 对象键前缀（首尾 `/` 归一化后拼接逻辑路径；空串合法 = 根）。
     pub prefix: String,
-    /// `true` = path-style（`/{bucket}/{key}`），`false` = virtual-host。
     pub path_style: bool,
 }
 
-/// S3 哑字节通道。内部为官方异步客户端 + 专用同步桥接线程，可跨线程共享。
 pub struct S3Transport {
     client: Client,
     bucket: String,
@@ -82,7 +50,6 @@ impl std::fmt::Debug for S3Transport {
 }
 
 impl S3Transport {
-    /// 从配置构建通道（定型客户端参数；不发起网络请求）。
     pub fn new(config: S3Config) -> Result<Self> {
         let endpoint = config.endpoint.trim().trim_end_matches('/').to_string();
         if endpoint.is_empty() {
@@ -97,8 +64,6 @@ impl S3Transport {
                 "S3 桶名不能为空（同步通道配置缺陷）".to_string(),
             ));
         }
-        // 空白归一与 endpoint / bucket / prefix 同规：区域参与 SigV4 签名范围，
-        // 带首尾空白会签出与桩/服务端不一致的凭据范围（只报鉴权失败，根因不可见）。
         let region = config.region.trim().to_string();
         if region.is_empty() {
             return Err(AppError::Invalid(
@@ -122,8 +87,6 @@ impl S3Transport {
                 ))
                 .endpoint_url(endpoint)
                 .force_path_style(config.path_style)
-                // 兼容优先：只在服务端要求时计算/校验，避免对第三方兼容服务
-                // 追加 AWS 专有校验和扩展；显式配置，不依赖环境变量。
                 .request_checksum_calculation(RequestChecksumCalculation::WhenRequired)
                 .response_checksum_validation(ResponseChecksumValidation::WhenRequired)
                 .build(),
@@ -137,7 +100,6 @@ impl S3Transport {
         })
     }
 
-    /// 逻辑路径 → 对象键（前缀归一化后拼接；空前缀直接使用逻辑路径）。
     fn object_key(&self, path: &str) -> Result<String> {
         validate_logical_path(path)?;
         if self.prefix.is_empty() {
@@ -150,7 +112,6 @@ impl S3Transport {
 
 impl Transport for S3Transport {
     fn ensure_dir(&self, path: &str) -> Result<()> {
-        // 对象存储无目录：仅做路径守卫，零网络请求、零副作用。
         validate_logical_path(path)
     }
 
@@ -203,7 +164,6 @@ impl Transport for S3Transport {
     }
 }
 
-/// 分片上传：Create → UploadPart×N → Complete；任一步失败尽力 Abort。
 async fn write_multipart(client: &Client, bucket: &str, key: &str, payload: Vec<u8>) -> Result<()> {
     let created = client
         .create_multipart_upload()
@@ -219,7 +179,6 @@ async fn write_multipart(client: &Client, bucket: &str, key: &str, payload: Vec<
 
     let result = upload_parts_and_complete(client, bucket, key, &upload_id, payload).await;
     if result.is_err() {
-        // 清理失败不覆盖原始错误：分片残留可被服务端生命周期规则回收。
         let _ = client
             .abort_multipart_upload()
             .bucket(bucket)
@@ -281,12 +240,6 @@ async fn upload_parts_and_complete(
         .map_err(|e| sdk_error(&e))
 }
 
-/// GetObject 的 404 归一：S3 无对象语义是 [`Transport::read_file`] 的 `None`
-/// 常态输入，不是错误。XML `NoSuchKey` 与裸 404 状态都收口到这里。
-///
-/// **`NoSuchBucket` 必须排除在外**：桶不存在同样是 404，把它当成 `None` 会让
-/// 「桶名写错」的端一路读空、静默当作「通道上还没有数据」（issue #1219 错误
-/// 分层）；它走 [`sdk_error`] 归 [`target_missing_error`]。
 fn get_object_missing(err: &SdkError<GetObjectError>) -> bool {
     if service_code(err) == Some("NoSuchBucket") {
         return false;
@@ -297,9 +250,6 @@ fn get_object_missing(err: &SdkError<GetObjectError>) -> bool {
         || matches!(err.as_service_error(), Some(GetObjectError::NoSuchKey(_)))
 }
 
-/// 凭据类服务端错误码：S3 对「密钥不存在 / 签名不符 / 临时凭据过期」回 403 而非
-/// 401，按错误码把它们与「凭据有效但没权限」（`AccessDenied`）分开——前者让用户
-/// 改密钥、后者让用户改授权，下一步动作不同（issue #1219 错误分层）。
 const CREDENTIAL_ERROR_CODES: &[&str] = &[
     "InvalidAccessKeyId",
     "SignatureDoesNotMatch",
@@ -308,14 +258,10 @@ const CREDENTIAL_ERROR_CODES: &[&str] = &[
     "TokenRefreshRequired",
 ];
 
-/// 服务端错误码（XML `<Code>` 字段，如 `NoSuchBucket` / `AccessDenied`）；
-/// 非服务端错误（连接失败、构造失败等）回 `None`。
 fn service_code<E: ProvideErrorMetadata>(err: &SdkError<E>) -> Option<&str> {
     err.as_service_error().and_then(|error| error.code())
 }
 
-/// SDK 错误 → 域码化错误：按「凭据错 / 目标不存在 / 权限不足 / 网络不可达 /
-/// 服务异常」五层归类（issue #1219）。不裸上抛 SDK 细节给用户层以外的调用方。
 fn sdk_error<E: ProvideErrorMetadata>(err: &SdkError<E>) -> AppError {
     if let Some(raw) = err.raw_response() {
         return classify_http_failure(raw.status().as_u16(), service_code(err));
@@ -326,9 +272,6 @@ fn sdk_error<E: ProvideErrorMetadata>(err: &SdkError<E>) -> AppError {
     }
 }
 
-/// 五层归类的单点：先按服务端错误码（同一 403 下 `AccessDenied` 是权限、
-/// `InvalidAccessKeyId` 是凭据），码未给出时退回 HTTP 状态（401 凭据 / 403 权限 /
-/// 其余服务异常）。
 fn classify_http_failure(status: u16, code: Option<&str>) -> AppError {
     if let Some(code) = code {
         match code {
@@ -345,21 +288,12 @@ fn classify_http_failure(status: u16, code: Option<&str>) -> AppError {
     }
 }
 
-/// 同步 → 异步桥接的任务类型：在专用 runtime 上执行并回传结果。
 type BridgeJob = Box<dyn FnOnce(&tokio::runtime::Runtime) + Send + 'static>;
 
-/// 桥接线程创建接缝：生产实现是 [`spawn_bridge_thread`]；测试注入创建失败，
-/// 观察「线程未创建时调用方线程上不存在任何阻塞资源」（issue #1405）。
 type ThreadSpawner = fn(Box<dyn FnOnce() + Send>) -> std::io::Result<thread::JoinHandle<()>>;
 
-/// 桥接线程启动握手：runtime 在桥接线程内构建的结果先回传调用方，线程再开始接活。
 type BridgeStartup = std::result::Result<(), AppError>;
 
-/// 桥接 runtime（current-thread + 全驱动）。**生产启动路径上的唯一构造点**，
-/// 且必须只在桥接线程闭包内执行（issue #1405）：runtime 是阻塞资源，构造与
-/// 销毁都不得落在调用方线程——调用方可能正处于异步上下文（tokio worker /
-/// `block_on`），在那里销毁 runtime 会撞 tokio 的「Cannot drop a runtime in a
-/// context where blocking is not allowed」（#1403 同根因）。
 pub(crate) fn transport_runtime() -> Result<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -367,7 +301,6 @@ pub(crate) fn transport_runtime() -> Result<tokio::runtime::Runtime> {
         .map_err(|e| AppError::Invalid(format!("S3 传输运行时初始化失败: {e}")))
 }
 
-/// 桥接线程创建（生产实现，唯一调用点在 [`AsyncBridge::spawn_with`]）。
 pub(crate) fn spawn_bridge_thread(
     body: Box<dyn FnOnce() + Send>,
 ) -> std::io::Result<thread::JoinHandle<()>> {
@@ -376,8 +309,6 @@ pub(crate) fn spawn_bridge_thread(
         .spawn(body)
 }
 
-/// 专用线程 + current-thread Tokio runtime。`call` 阻塞等待该线程执行任务；
-/// Drop 时关闭通道并加入线程，保证 runtime 生命周期不泄漏。
 pub(crate) struct AsyncBridge {
     tx: Option<mpsc::Sender<BridgeJob>>,
     join: Option<thread::JoinHandle<()>>,
@@ -388,16 +319,6 @@ impl AsyncBridge {
         Self::spawn_with(transport_runtime, spawn_bridge_thread)
     }
 
-    /// 启动单点（生产与测试走同一条路径，只有注入件不同）：
-    ///
-    /// 1. **runtime 在桥接线程闭包内构建**——线程创建失败是启动路径上唯一在
-    ///    调用方线程可见的失败分支，此时闭包（连同从未构建的 runtime）就地丢弃，
-    ///    调用方线程上根本没有 runtime 可销毁；调用方即使在异步上下文
-    ///    （tokio worker / `block_on`）里启动桥，也不会撞 tokio 的
-    ///    「Cannot drop a runtime in a context where blocking is not allowed」；
-    /// 2. **构建结果经启动握手回传**——构建失败 fail loud 止在构造点，不留一个
-    ///    没有执行者的通道让后续调用永久阻塞（先例：reqwest
-    ///    `blocking/client.rs` 以通道回传运行时线程的启动结果）。
     pub(crate) fn spawn_with(
         build: impl FnOnce() -> Result<tokio::runtime::Runtime> + Send + 'static,
         spawn: ThreadSpawner,
@@ -412,8 +333,6 @@ impl AsyncBridge {
                     return;
                 }
             };
-            // 握手送不出去 = 调用方已放弃本次启动（等待中 Drop）：直接退出，
-            // runtime 在本线程销毁。
             if ready_tx.send(Ok(())).is_err() {
                 return;
             }
@@ -431,8 +350,6 @@ impl AsyncBridge {
                 let _ = join.join();
                 Err(error)
             }
-            // 握手未达成即线程退出（例如构建 panic）：同样 fail loud，不留
-            // 没有执行者的通道。
             Err(_) => {
                 let _ = join.join();
                 Err(AppError::Invalid("S3 传输桥接线程启动失败".to_string()))
@@ -461,7 +378,6 @@ impl AsyncBridge {
 
 impl Drop for AsyncBridge {
     fn drop(&mut self) {
-        // 先断开发送端让桥接线程退出循环，再等待其结束；Drop 不与 runtime 耦合。
         self.tx.take();
         if let Some(join) = self.join.take() {
             let _ = join.join();

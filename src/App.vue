@@ -86,35 +86,19 @@ import { useWindowTier } from "@ledger/window-tier";
 const router = useRouter();
 const route = useRoute();
 
-// 侧栏顺序状态（组内序 + 收纳清单）：sidebar-order store 单一归宿（issue #549），
-// 此处消费状态/写路径/谓词；键位面（viewShortcuts/shortcutHint）仍归 useViewShortcuts。
 const sidebarOrder = useSidebarOrderStore();
 const { applySidebarSort, applyMoveIntoMore, resetSidebarOrder, isSidebarMember } = sidebarOrder;
-// 功能开关的存在层过滤（issue #1242 / ADR-0116 决策 3）：只筛入口，不改写侧栏顺序与收纳清单。
 const featureToggles = useFeatureToggleStore();
-// 视图快捷键：窗口内 Cmd/Ctrl+1..0 与 Cmd/Ctrl+, 切换视图（弹窗/确认框打开时自动抑制）
 const { viewShortcuts } = useViewShortcuts(router);
 
-// 窗口行为守卫（issue #154）：ESC 不作用于窗口层 + 禁用原生右键菜单（可编辑元素例外），
-// 根组件挂载一次，详见 composables/useWindowGuard.ts。
 useWindowGuard();
 
-// 系统返回桥接（issue #845 / ADR-0088 决策 7）：Android 返回键语义三段（关最上层
-// 弹层 → 路由回退 → 交还系统），仅移动档挂载，根组件挂载一次，详见
-// composables/useSystemBack.ts。
 useSystemBack();
 
-// 窗口分级（ADR-0088 决策 2 / 词汇表「窗口分级」）：单一断点两档。桌面档渲染既有
-// 侧栏布局（一字不动）；<840 移动档渲染导航壳（顶栏 + 导航抽屉，词汇表「导航抽屉」），
-// 抽屉消费同一份导航状态（menuOptions / handleSelect），ViewState 语义与存储零改动。
 const tier = useWindowTier();
 
-// 侧栏展开宽度随界面语言（英文更长：160px 下组标题行「更多」链接被右缘裁切、
-// 菜单项行偏挤）：zh-CN 维持 160 不变，en-US 200；切换语言走 NLayoutSider
-// 原生宽度过渡。宽度不持久化（ViewState 只覆盖折叠态，不做过度记忆）。
 const siderWidth = computed(() => (currentLocale.value === "en-US" ? 200 : 160));
 
-// ViewState：侧边栏折叠状态跨启动保持。
 const sidebarCollapsed = ref(loadSidebarCollapsed());
 function updateSidebarCollapsed(collapsed: boolean) {
   sidebarCollapsed.value = collapsed;
@@ -122,25 +106,16 @@ function updateSidebarCollapsed(collapsed: boolean) {
 }
 const store = useAppStore();
 
-// 主题合同（issue #888 / ADR-0093）：亮/暗模式一次解析出根元素主题类与组件库
-// 覆盖。主题类经 bindRootThemeClass 绑定 document.body（新方案 vanilla-extract
-// 样式的变量宿主，teleport 弹层同域继承），由 Appearance 设备偏好驱动，与组件
-// 库主题切换并行不互扰，不出现第二主题状态源。
 const appTheme = computed(() => resolveAppTheme(store.theme));
 watchEffect(() => bindRootThemeClass(appTheme.value.rootClass));
 
-// UI 组件库内置文案（日期选择器、分页、空态等）随应用界面语言切换（ADR-0049）：
-// 经 NConfigProvider 的 locale / date-locale 注入，语言切换即时生效。
-// 窗口标题随界面语言（原生窗口壳层文案）；非 Tauri 环境（测试/Web）静默忽略
 watch(
   currentLocale,
   async () => {
     try {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       void getCurrentWindow().setTitle(t("common.app.name"));
-    } catch {
-      /* 非 Tauri 环境 */
-    }
+    } catch {}
   },
   { immediate: true },
 );
@@ -148,19 +123,9 @@ watch(
 const naiveLocale = computed(() => (currentLocale.value === "en-US" ? enUS : zhCN));
 const naiveDateLocale = computed(() => (currentLocale.value === "en-US" ? dateEnUS : dateZhCN));
 
-// 启动门（issue #570 / #601 / ADR-0075 决策 5 修订）：启动先探测启动状态。
-// 锁定期间解锁屏、启动失败期间失败恢复屏各自整体替代主界面——主界面与全部
-// 业务 IPC 消费方（含设备偏好推送，已迁入 DevicePreferenceSyncHost 随主界面
-// 挂载）都不渲染，门禁放行前业务读写零发出；探测中（null）同样不渲染主界面，
-// 避免带半就绪状态闪屏。明文库/已解锁正常挂载。
 const { locked, bootFailed, probe } = useEncryptionGate();
 void probe();
 
-// 视图名称走文案资源（issue #342）：侧栏菜单与内容区标题同源，随界面语言即时切换；
-// key 构造收口在 i18n/view-label（key 契约有单测，漏域名前缀会原样渲染 key 代号）。
-
-// 视图图标（ionicons5 Outline 风格，与分类图标一致）：仅侧栏菜单项（主项 + 固定项）；
-// 出厂收纳成员图标与 GroupMoreView 页签映射同源（#475：移回侧栏后以主项身份入侧栏，随选随用）。
 const viewIcons: Record<string, Component> = {
   dashboard: HomeOutline,
   transactions: SwapHorizontalOutline,
@@ -184,18 +149,6 @@ function renderMenuIcon(name: string) {
   return () => h(NIcon, { size: 18 }, { default: () => h(viewIcons[name]) });
 }
 
-// 菜单项形态（issue #359 侧栏分组；#473 终态，ADR-0063 决策 1）：概览（固定）+
-// 记账/资产/洞察三组（各自主项 + 组标题行按需「更多」链接）+ AI、设置（两固定项）。
-// 全局「更多」固定项已退役；菜单项与快捷键共用同一顺序源（viewShortcuts：由组内序按
-// 线性位置推导键位，只扫主项），分组标题不占键位、不参与排序与计数
-// （NMenu group 选项天然不可选）；菜单响应式派生，组内排序变更时顺序与快捷键提示同步更新。
-// 键位提示两轴各按其轴退役（ADR-0088 决策 4/6，票③已落地）：宽度轴——移动抽屉
-// 恒传空表剥离；输入轴——触控轴桌面侧栏同规传空表（快捷键仅退役渲染，监听保留，
-// 带键盘的触屏设备仍可 Cmd/Ctrl 切换）。每项右侧附快捷键提示（数字位或设置项的 ⌘,，仅指针轴桌面档）；
-// 「更多」链接与收纳成员无键位、不出提示、不可键盘触发；
-// 折叠态不渲染组标题，「更多」链接随之不渲染（决策 6）。
-// 主项经 nodeProps 附右键组内排序菜单（issue #270/#359），固定项与分组标题不附
-// （右键无任何菜单，原生菜单由窗口守卫抑制）。注：NMenu 不支持选项级 props 字段，必须走菜单级 nodeProps。
 function renderItem(name: ViewName | ContainableViewName, key: string | null): MenuOption {
   return {
     key: name,
@@ -219,10 +172,7 @@ function renderItem(name: ViewName | ContainableViewName, key: string | null): M
 
 const inputMode = useInputMode();
 
-/** 菜单选项构建（桌面侧栏与移动抽屉两壳层共享的单一来源，消费同一份导航状态）：
- *  keyOf 为视图键位表，键位缺失即不出提示。 */
 function buildMenuOptions(keyOf: Map<string, string | null>): MenuOption[] {
-  // 入参含移回的种子成员（#475）：侧栏菜单项词表 = 主项 ∪ 出厂种子
   const item = (name: ViewName | ContainableViewName) => renderItem(name, keyOf.get(name) ?? null);
   const closed = (name: ContainableViewName) => featureToggles.isFeatureClosed(name);
   return [
@@ -234,8 +184,6 @@ function buildMenuOptions(keyOf: Map<string, string | null>): MenuOption[] {
       return {
         type: "group",
         key: `sidebar-group:${g.id}`,
-        // 组标题行：组名 + 按需「更多」链接（issue #472/#473 / ADR-0063 决策 1）——
-        // 链接仅当组内存在未关闭收纳成员时渲染；折叠态不渲染组标题，链接随之不渲染。
         label: () =>
           h("div", { class: "sidebar-group-title" }, [
             h("span", t(`common.sidebarGroup.${g.id}`)),
@@ -244,7 +192,6 @@ function buildMenuOptions(keyOf: Map<string, string | null>): MenuOption[] {
                   "a",
                   {
                     class: ["group-more-link", { "is-active": route.name === `${g.id}-more` }],
-                    // 原生 tooltip 只说明可见去向，不泄露已关闭功能。
                     title: visibleContainment
                       .map((n) => viewLabel(n))
                       .join(currentLocale.value === "en-US" ? ", " : "、"),
@@ -276,8 +223,6 @@ function buildMenuOptions(keyOf: Map<string, string | null>): MenuOption[] {
   ];
 }
 
-/** 桌面侧栏菜单：指针轴渲染键位提示（⌘1–9/⌘0/⌘,/⌘`，ADR-0065）；触控轴
- *  退役渲染（ADR-0088 决策 6 / issue #843）——传空表剥离提示，监听不受影响。 */
 const menuOptions = computed<MenuOption[]>(() =>
   buildMenuOptions(
     inputMode.value === "pointer"
@@ -286,13 +231,8 @@ const menuOptions = computed<MenuOption[]>(() =>
   ),
 );
 
-/** 移动抽屉菜单：同一导航状态、剥离键位带（移动档不渲染键位提示，ADR-0088 决策 4 关联 ADR-0065）。 */
 const drawerMenuOptions = computed<MenuOption[]>(() => buildMenuOptions(new Map()));
 
-/** 菜单级 nodeProps：仅当前在册成员附右键事件（issue #475 改用 isSidebarMember：
- *  主项与移回的种子可排序/移入；固定项与仍在清单的收纳成员无任何右键菜单）。
- *  naive-ui 的 nodeProps 返回类型把索引签名限成 string|number，事件函数过不去
- *  （类型仅对 data-* 友好），运行时照常铺到节点上，故此处断言放宽。 */
 function nodeProps(option: MenuOption) {
   const name = option.key as string;
   if (!isSidebarMember(name)) return {};
@@ -300,12 +240,6 @@ function nodeProps(option: MenuOption) {
     onContextmenu: (e: MouseEvent) => showSortMenu(e, name),
   } as unknown as HTMLAttributes & Record<string, string | number | undefined>;
 }
-
-// ---------------------------------------------------------------------------
-// 侧栏右键排序菜单（issue #270，#359 收窄为组内；#474 增「移入更多」）：主项右键弹出
-// 组内排序菜单（上移/下移/移顶/移底/移入更多/恢复默认），手动定位弹出，与行级右键菜单
-// 同一模式；点选即重排或移入并立即持久化，菜单打开期间视图快捷键由既有弹层抑制机制压制。
-// ---------------------------------------------------------------------------
 
 const sortMenuShow = ref(false);
 const sortMenuX = ref(0);
@@ -319,7 +253,6 @@ const sortMenuOptions = computed(() => {
   return buildSidebarSortMenuOptions(target, sidebarOrder.sidebarGroupOrders[gid]);
 });
 
-/** 右键在册成员弹出排序菜单：先收起再 nextTick 展开，保证连续弹出时位置刷新。 */
 function showSortMenu(e: MouseEvent, name: ContainableViewName) {
   sortTarget.value = name;
   sortMenuX.value = e.clientX;
@@ -338,12 +271,10 @@ function onSortMenuSelect(key: string) {
     resetSidebarOrder();
     return;
   }
-  // 「移入更多」（issue #474）：主项退出组内序、追加本组收纳清单尾，点选即持久化
   if (key === "intoMore") {
     applyMoveIntoMore(target);
     return;
   }
-  // 菜单 key 与移动动作同一词表（key 即 action），守卫收窄后零断言
   if (isSidebarSortAction(key)) {
     applySidebarSort(target, key);
   }
@@ -353,19 +284,7 @@ function handleSelect(key: string) {
   router.push({ name: key });
 }
 
-// 侧栏标题行（issue #566）：应用显示名 + 金额隐私模式眼睛按钮——标题文本消费 i18n
-// 应用名键 common.app.name（ADR-0076：显示名不得在 i18n 之外硬编码，t() 随语言切换
-// 重渲染）；眼睛按钮入口唯一（spec #564：不进设置页、无快捷键、无第二渲染点），
-// 消费应用设置 store 同一状态；睁/闭两态图标与
-// tooltip、aria-label 反映当前状态（文案经 i18n 双语，aria-pressed 携带开关态），
-// 点击即切换并持久化；格式化层（@ledger/money）消费同一 ref，全应用金额即时掩码/恢复。
-// 渲染函数读取响应式状态，语言/开关变化时随重新渲染；侧栏折叠（宽度归零）时按钮
-// 不可见，展开即可切换（接受取舍，不设第二渲染点）。
-// 命名：brandRow（品牌行）——同文件另有顶栏视图名 title prop（MobileNavShell），
-// 同名两义易误读（审查发现），取渲染物命名。
 const brandRow = () => {
-  // 无障碍标签/tooltip 反映当前状态（文案随界面语言）：关→「隐藏金额」、开→「显示金额」，
-  // aria-pressed 携带开关态（WAI-ARIA toggle button 模式）
   const privacyLabel = store.amountPrivacyEnabled
     ? t("common.amountPrivacy.show")
     : t("common.amountPrivacy.hide");
@@ -508,8 +427,6 @@ const pageTitle = computed(() => (typeof route.name === "string" ? viewLabel(rou
   </NConfigProvider>
 </template>
 <style scoped>
-/* 屏名标题（壳层单一 h1）：沿用原 NText strong 的 20px/600 观感，只补浏览器的
-   h1 默认外距与字体继承复位。 */
 .page-title {
   margin: 0;
   font-size: 20px;
@@ -518,8 +435,6 @@ const pageTitle = computed(() => (typeof route.name === "string" ? viewLabel(rou
   color: inherit;
 }
 
-/* 侧栏纵向骨架：品牌行 → 菜单区（弹性伸展、独立滚动）→ 底部账本入口（issue #834）。
-   取代原 NSpace vertical size=0（wrap-item 包裹层会让 flex:1 失效）。 */
 .sider-column {
   display: flex;
   flex-direction: column;

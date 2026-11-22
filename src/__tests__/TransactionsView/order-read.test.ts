@@ -22,13 +22,6 @@ import {
   SHELL_OVERRIDES,
 } from "./common";
 
-/**
- * 订单可读性读侧（issue #1862 / ADR-0138 决策 9；#1928 撤列表徽章）：来源订单号
- * 行菜单与详情订单区。列表不渲染订单号（出口收敛为详情订单区，ADR-0138 修订注记）；
- * 订单区数据经订单汇总只读命令（get_transaction_order_summary）自取。
- */
-
-/** 同单两行：一行组合支付分解、一行单账户普通行——同一订单号。 */
 function orderRows() {
   return [
     makeTxn(1, null, {
@@ -52,7 +45,6 @@ function orderRows() {
   ];
 }
 
-/** 订单汇总替身应答（与后端聚合口径一致的静态快照）。 */
 function orderSummary(): TransactionOrderSummary {
   return {
     source_order_no: "JD-9001",
@@ -151,16 +143,13 @@ describe("详情订单区（issue #1862）", () => {
     await selectRowMenu(wrapper, "detail");
     expect(shownModal(wrapper), "期望详情弹窗打开").toBeTruthy();
 
-    // 调用事实：以行上订单号查询汇总
     expect(lastInvokeArgs("get_transaction_order_summary")).toEqual({ sourceOrderNo: "JD-9001" });
 
-    // 渲染效果：订单区（行数 · 合计 · 构成徽标 · 明细）
     const text = visibleModalText();
     expect(text).toContain("所属订单");
     expect(text).toContain("JD-9001");
     expect(text).toContain("2 行");
     expect(text).toContain("¥291.6");
-    // 出资构成徽标：账户名 + 金额（多账户 2 枚）
     expect(text).toContain("现金");
     expect(text).toContain("¥38.53");
     expect(text).toContain("银行");

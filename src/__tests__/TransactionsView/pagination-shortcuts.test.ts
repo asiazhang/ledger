@@ -12,12 +12,6 @@ import { createOverlayToken, resetOverlays } from "@ledger/ui-kit/overlayRegistr
 
 const HINT_ZH = "[ 上一页 · ] 下一页";
 
-/**
- * 翻页快捷键（issue #1902 / ADR-0140）：裸键 `[` / `]` 步进页码，语义等同点击分页条
- * （以最新页码为基准走既有翻页出口，首/末页越界幂等无操作）。
- * 断言全部对准用户可观察结果（页码 / 重拉 / 提示渲染）；删除视图中的
- * usePaginationShortcuts 接线调用即「] 步进」等用例变红（接线证明，ADR-0087）。
- */
 describe("TransactionsView 翻页快捷键", () => {
   beforeEach(() => {
     resetOverlays();

@@ -1,37 +1,20 @@
 import { globalStyle } from "@vanilla-extract/css";
 import { appVars } from "@ledger/theme/app-theme.css.ts";
 
-/**
- * 出资分解只读详情（FundingDetail）旁路样式（issue #1861 / ADR-0138 决策 8，
- * ADR-0093 样式方案）：与组件同目录共置，teleport 弹窗内渲染、类名为稳定钩子类，
- * 不覆盖任何 naive 内部类。中性视觉取值一律经主题合同变量（appVars），亮暗随根
- * 主题类换装；派生标注蓝与列表侧徽标（transaction-columns 渲染单源）及同步进度
- * 条（sync-progress-bar.css.ts 先例）同一取值——info 语义色合同变量不覆盖，按
- * 先例以一次性字面量收在本文件、不入 sprinkles（不造第二套常量来源）。
- */
-
-/** 出资分解区容器。 */
 export const FUNDING_SECTION_CLASS = "funding-section";
 
-/** 区标题（弱化小字）。 */
 export const FUNDING_SECTION_TITLE_CLASS = "funding-section-title";
 
-/** 派生标注（虚线徽标）。 */
 export const FUNDING_DERIVED_CLASS = "funding-derived";
 
-/** 出资项行。 */
 export const FUNDING_ROW_CLASS = "funding-row";
 
-/** 出资账户名（弹性省略）。 */
 export const FUNDING_ACCOUNT_CLASS = "funding-account";
 
-/** 扣款标签徽标（NTag 载体，不收缩）。 */
 export const FUNDING_LABEL_CLASS = "funding-label";
 
-/** 出资金额（表格数字对齐）。 */
 export const FUNDING_AMOUNT_CLASS = "funding-amount";
 
-/** Σ 合计行。 */
 export const FUNDING_TOTAL_CLASS = "funding-total";
 
 globalStyle(`.${FUNDING_SECTION_CLASS}`, {

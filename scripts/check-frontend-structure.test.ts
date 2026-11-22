@@ -13,18 +13,6 @@ import {
 } from "./check-frontend-structure.fixture.ts";
 import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 
-// 被测对象是仓库工具脚本 scripts/check-frontend-structure.ts（前端 workspace 结构
-// 守门，issue #1149 规则①—⑥ / #1323 规则⑦）。测试与所测脚本同目录住（#1158）：
-// 规则①—⑥测试 #1149 起住 src/__tests__（早于同目录约定），#1991 并入本文件——
-// 同被测对象的两份测试文件收敛为一份，vitest 收集范围自此不含任何 spawnSync('bun')
-// 的测试（守门脚本测试唯一运行口径 = bun test，见 gate-mounts 挂载登记）。
-// 脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun') 与门槛调用
-// 同款拉起，测的就是门槛路径。按测试决策只测外部可观察结果——进程退出码与输出
-// （ADR-0087 断言强度），不触及脚本内部函数形状；通过位置参数把校验目标指向临时
-// 夹具仓库根（[repo-root] [packages-manifest.json]），夹具登记表经 arg2 JSON 注入
-// （生产路径不传，PACKAGES 单一事实源不变）。
-// 夹具仓库根 builder 住共享辅助 ./check-frontend-structure.fixture.ts（issue
-// #1435：登记项按生产登记表迭代创建，新增登记项夹具零编辑）。
 const script = gateScript("check-frontend-structure.ts");
 const run = (args: string[]) => runGateScript(script, args);
 
@@ -32,13 +20,10 @@ afterAll(() => {
   cleanupFixtureRepos();
 });
 
-/** 写成员包清单（name 字段与登记表全等，deps 按给定值） */
 function writePackageManifest(root: string, dir: string, pkg: Record<string, unknown>): void {
   writeFileSync(join(root, dir, "package.json"), JSON.stringify(pkg, null, 2));
 }
 
-/** 向夹具写入源文件（路径相对夹具根，posix 分隔；规则②消费面靶形等全部
- *  消费点共用本份——#1995 收敛两文件合并前各自的副本，此前局部份仅注释差异） */
 function writeSource(root: string, rel: string, source: string): void {
   const abs = join(root, ...rel.split("/"));
   mkdirSync(dirname(abs), { recursive: true });
@@ -53,8 +38,6 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
   });
 
   it("夹具最小绿：glob 声明 + 空成员 + 接线齐全", () => {
-    // #1150 起 PACKAGES 非空：无 manifest 的夹具运行会拿生产登记表对夹具根校验、
-    // 触发「清单漂移」假红，故最小绿夹具显式注入空登记表（注入即完全替代）。
     const r = run(fixtureRepo({ manifest: [] }));
     expect(r.status).toBe(0);
     expect(r.output).toContain("成员登记 0 个");
@@ -104,7 +87,6 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
   });
 
   describe("规则②：包依赖方向（方向表逐票补充）", () => {
-    /** 建一对已登记成员 a、b（a 依赖 b 的方向由 deps 与包清单共同决定） */
     function twoPackages(aDeps: string[], aManifestDeps: Record<string, string>): string[] {
       const manifest: FixtureEntry[] = [
         { name: "@ledger/a", dir: "packages/a", deps: aDeps, note: "夹具 a" },
@@ -121,7 +103,6 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
     }
 
     it("依赖未登记包即红", () => {
-      // 登记表只含 a（ghost 缺席），单独核「依赖未登记包」靶形
       const manifest: FixtureEntry[] = [
         { name: "@ledger/a", dir: "packages/a", deps: [], note: "夹具 a" },
       ];
@@ -143,8 +124,6 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
     });
 
     it("方向表放行该边即绿", () => {
-      // #1470 起「绿」须双向全等：清单声明 + 源码实际消费同时具备（仅声明不消费
-      // 触发「反向核对」用例的红）
       const args = twoPackages(["@ledger/b"], { "@ledger/b": "workspace:*" });
       writeSource(
         args[0] as string,
@@ -167,12 +146,7 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
       expect(r.output).toContain("不在其方向表内");
     });
 
-    // 规则②消费面（issue #1470）：声明边核对「方向表 ⊆ 实际 import」，反向核对
-    // 「实际 import ⊆ 方向表」，二者合起来才是包登记 note 承诺的「全等」。两条
-    // 核对各自有专属红夹具（下面前两个用例）——删除任一条核对即至少一条变红。
     it("消费方声明边：包内源码 import 兄弟包而四类依赖均未声明即红（幽灵 import，issue #1470）", () => {
-      // 方向表登记该边、包清单却零声明：源码 import 借 workspace 根 node_modules
-      // 符号链接即可解析，方向表被静默绕过——现状两个方向都拦不住
       const args = twoPackages(["@ledger/b"], {});
       const root = args[0] as string;
       writeSource(root, "packages/a/src/x.ts", "import { y } from '@ledger/b'\nexport { y }\n");
@@ -185,8 +159,6 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
     });
 
     it("反向核对：方向表登记的边无实际消费即红（全等须双向可证伪，issue #1470）", () => {
-      // 包清单声明与方向表一致、源码却不消费该边：登记边可能是打字漂移或搬迁
-      // 残留，仅核「声明 ⊆ 方向表」时该边静默存活
       const args = twoPackages(["@ledger/b"], { "@ledger/b": "workspace:*" });
       writeSource(
         args[0] as string,
@@ -217,7 +189,6 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
   });
 
   describe("规则③：跨包引用形态（@ledger/* 包名，禁 @/ 与相对穿越）", () => {
-    /** 建已登记成员 a + 其源文件内容 */
     function packageWithSource(source: string): string[] {
       const manifest: FixtureEntry[] = [
         { name: "@ledger/a", dir: "packages/a", deps: [], note: "夹具 a" },
@@ -231,8 +202,6 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
     }
 
     it("@/ 别名即红，定位文件与行号", () => {
-      // 夹具路径取非 utils 的壳层目录（#1314 起该别名形态全仓零残留）：
-      // 靶形是 @/ 别名本身，具体子路径任意
       const r = run(
         packageWithSource("import { helper } from '@/lib/format'\nexport { helper }\n"),
       );
@@ -270,7 +239,6 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
   });
 
   describe("规则④：深导入禁令（跨包引用必须命中 exports 入口）", () => {
-    /** 建 a → b 深导入夹具：b 的 exports 按给定值写，a 源文件给给定 import */
     function deepImportFixture(
       importSpec: string,
       exportsField: Record<string, unknown> | string,
@@ -477,9 +445,6 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
   });
 
   describe("规则⑤：测试支持纯净性（testSupport 包仅 devDependency 消费，#1152）", () => {
-    /** 建含测试支持包的夹具：登记表注入（testSupport 标志），成员与根包清单自足。
-     *  返回完整 args（含 manifest 路径）；memberManifest 覆写成员清单（规则⑤自身
-     *  dependencies 用例）。 */
     function testSupportArgs(
       consumerManifest: Record<string, unknown>,
       memberManifest: Record<string, unknown> = { name: "@ledger/ts", devDependencies: {} },
@@ -532,10 +497,6 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
   });
 
   describe("规则⑥：上行引用禁令登记册（#1156 设立 / #1314 收缩）", () => {
-    // #1314 起 src/utils 全量成包 @ledger/utils，唯一登记项（dir: 'src/utils' 的
-    // 四条上行禁令）随搬迁对象消失而收缩清空——包层上行由规则②③④接管；登记
-    // 机制保留（后续目录级边界约束的登记处）。本断言钉住空集现状：登记项的
-    // 增删都必须是有意识的登记表变更，改而不验即红。
     it("登记表与已固化约束全等（#1314 后为空集）", () => {
       expect(FORBIDDEN_UPWARD_IMPORTS).toEqual([]);
     });

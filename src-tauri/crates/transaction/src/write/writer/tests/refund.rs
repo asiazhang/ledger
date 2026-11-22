@@ -1,6 +1,3 @@
-//! refund 链归一化：必须关联原支出、继承原支出账户/币种/分类（忽略调用方
-//! 填写值），以及来源非支出/不存在/已软删除的拒绝路径。
-
 use rusqlite::params;
 
 use ledger_infra::error::{AppError, ErrClass};
@@ -11,11 +8,6 @@ use super::common::{input, insert_source_expense};
 use crate::tests::common::seed_category;
 use tauri_app_lib::test_support;
 
-// ---------------------------------------------------------------------------
-// normalize：退款继承原支出
-// ---------------------------------------------------------------------------
-
-/// refund 未关联原支出交易 → 报错。
 #[test]
 fn normalize_refund_requires_source_id() {
     let conn = test_support::open();
@@ -24,7 +16,6 @@ fn normalize_refund_requires_source_id() {
     assert_eq!(err.to_string(), "退款必须关联原支出交易");
 }
 
-/// 退款继承原支出的账户/币种/分类，忽略调用方填写的 account_id/currency_code/category_id。
 #[test]
 fn normalize_refund_inherits_source_fields() {
     let conn = test_support::open();
@@ -46,7 +37,6 @@ fn normalize_refund_inherits_source_fields() {
         },
     )
     .unwrap();
-    // 继承原支出：账户/币种/分类均为来源值，而非调用方填的字段
     assert_eq!(norm.account_id.as_deref(), Some("acc-src"));
     assert_eq!(norm.currency_code, "CNY");
     assert_eq!(norm.category_id.as_deref(), Some(cat_src.as_str()));
@@ -54,12 +44,10 @@ fn normalize_refund_inherits_source_fields() {
         norm.refund_of_transaction_id.as_deref(),
         Some(source_id.as_str())
     );
-    // 金额与日期仍是调用方值
     assert_eq!(norm.amount_cents, 200);
     assert_eq!(norm.date, "2026-01-01");
 }
 
-/// 关联的交易不是支出（income）→ 报错。
 #[test]
 fn normalize_refund_rejects_non_expense_source() {
     let conn = test_support::open();
@@ -78,7 +66,6 @@ fn normalize_refund_rejects_non_expense_source() {
     assert_eq!(err.to_string(), "退款只能关联支出交易");
 }
 
-/// 关联的原支出不存在 → NotFound。
 #[test]
 fn normalize_refund_source_not_found() {
     let conn = test_support::open();
@@ -103,7 +90,6 @@ fn normalize_refund_source_not_found() {
     );
 }
 
-/// 关联的原支出已软删除 → 视为不存在（NotFound）。
 #[test]
 fn normalize_refund_source_soft_deleted_is_not_found() {
     let conn = test_support::open();

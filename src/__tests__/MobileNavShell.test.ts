@@ -10,12 +10,6 @@ import {
   findDrawerItem,
 } from "@ledger/test-support/mobile-nav";
 
-/**
- * 移动档导航壳组件测试（issue #842）：只断言「看到什么、交互后发生什么」——
- * 顶栏渲染、抽屉开合经弹层注册表上报（快捷键抑制判定）、选中事件、导航即关闭。
- * 菜单选项以最小桩传入（与桌面侧栏同一份派生的接线归 App 壳测试）。
- */
-
 async function mountShell() {
   const router = createRouter({
     history: createMemoryHistory(),

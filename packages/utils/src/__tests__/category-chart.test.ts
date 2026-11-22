@@ -10,8 +10,6 @@ import {
 import type { Category, CategoryShare } from "@ledger/types";
 import { formatAmount } from "@ledger/money";
 
-// 共享工厂 makeCategory 的包内自足副本（与 src/__tests__/factories.ts 同源同体；
-// 本测试随被测包搬迁后夹具不回指壳层）
 function makeCategory(partial: Partial<Category> & { id: string }): Category {
   return {
     name: partial.id,
@@ -145,7 +143,6 @@ describe("categoryDrilldownBars 图内下钻（issue #379）", () => {
       ["餐饮（直挂）", 2000],
       ["零食", 1000],
     ]);
-    // 合计 = 父柱金额（基础态餐饮柱 = 2000 + 1000 = 3000）
     expect(categoryBarTotal(bars)).toBe(
       categoryBarTotal(categoryBars(shares, drillCategories).filter((b) => b.id === "food")),
     );
@@ -218,7 +215,6 @@ describe("tooltip 标签与合计（issue #378）", () => {
   });
 
   it("tooltip 标签 =「金额 · 占比%」，分母为全部一级柱合计", () => {
-    // 金额段委托 formatAmount（issue #770，8500 分分母）；「 · 占比%」连接与取整为本函数自身规则
     expect(barTooltipLabel(6000, 8500)).toBe(`${formatAmount(6000)} · 71%`);
   });
 

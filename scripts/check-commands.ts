@@ -1,19 +1,4 @@
 #!/usr/bin/env bun
-// 命令注册一致性校验（issue #315 / ADR-0047 命令名腿；issue #1398 参数键名腿）：
-// 命令单一来源 = `#[tauri::command]` 注解本身。命令名腿：左集 = Rust 注解命令名
-// （与 src-tauri/build.rs 扫描器同源同界）；右集 = packages/api/src/index.ts 的
-// invoke('命令名') / invoke("命令名") 字符串（单双引号均识别；模板字面量维持不
-// 支持，既有文档化取舍，评审兜底），双向全等。TS 调用面先经注释掩码再匹配（复用
-// TS 侧注释掩码库 gate-primitives.ts 的 maskComments，#1471 / #1481 上收、#1680 并入
-// 共享模块）：注释掉的 invoke 形态不算真实调用面，不再报「Rust 无此命令」假红。参数键名腿（#1398，
-// #588 类回归根治）：Rust
-// 数据参数名经 lowerCamelCase 转换（转换规则与 tauri-macros 的 heck
-// ToLowerCamelCase 参数绑定一致）后，与 invoke 实参对象的字面量键每命令每调用点
-// 双向全等，多处调用点键集须互相一致；State/AppHandle/Window/WebviewWindow 注入
-// 参数不进键集（闭集见 isInjectedType）。任一方向孤儿即非零退出并列出差异。
-// TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
-// 门槛检查；调用方式 `bun scripts/check-commands.ts`。
-// 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-commands.ts [commands-dir] [api-file]
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,43 +11,27 @@ import {
   walkTextFiles,
 } from "./gate-primitives.ts";
 
-/** 单条扫描边界违规：行号 1 起算 + 违规行原文 */
 export interface ScanError {
   line: number;
   text: string;
 }
 
-/** Rust 命令参数：原名（snake_case）+ 是否 Tauri 注入参数（注入参数不进 invoke 键集） */
 export interface RustParam {
   name: string;
   injected: boolean;
 }
 
-/** 单条命令签名：命令名 + 参数列表 */
 export interface RustCommand {
   name: string;
   params: RustParam[];
 }
 
-/** scanRustSource 返回：命令名集 + 命令签名 + 扫描边界违规 */
 export interface ScanResult {
   names: string[];
   commands: RustCommand[];
   errors: ScanError[];
 }
 
-// 弱形态行注释剥离器 stripLineComment 已收口（issue #1741）：与共享原语
-// maskNonCode 在真实仓 src-tauri/src/commands 全部 28 个 .rs 逐文件对拍
-// （命令名集 + errors 逐行逐条）零差异，改在 scanRustSource 入口整文
-// maskNonCode(text, true) 后逐行直接 trim。keepLiterals 形态只掩注释、保留
-// 字符串字面量（`//` 落在字符串里不再误切真实代码），块注释一并掩掉——
-// 注解被块注释包裹的假红形态从此由单一权威裁决；消费名单由
-// gate-primitives.test.ts 锁定。
-
-/**
- * 从签名文本提取参数列表：首个 `(` 起到配对 `)` 止。
- * 未平衡返回 null（调用方继续累积后续行）；泛型 `<R: Runtime>` 与返回类型不参与。
- */
 function extractParamList(text: string): string | null {
   const start = text.indexOf("(");
   if (start === -1) return null;
@@ -77,10 +46,6 @@ function extractParamList(text: string): string | null {
   return null;
 }
 
-/**
- * 参数文本按顶层逗号切分：<> / () / [] 深度内的逗号不是分隔符
- * （如 State<'_, DbState>、Fn(A, B)）；`->` 的 > 不参与深度统计。
- */
 function splitTopLevel(text: string): string[] {
   const pieces: string[] = [];
   let current = "";
@@ -111,14 +76,6 @@ function splitTopLevel(text: string): string[] {
   return pieces.map((p) => p.trim()).filter((p) => p.length > 0);
 }
 
-/**
- * Tauri 注入参数闭集（issue #1398）：这些类型由 Tauri 运行时注入，不进 invoke
- * 实参键集。闭集按 2026-09 全量盘点 src-tauri/src/commands 收口：State<'_, …>
- * （88 处 + tauri:: 路径形态 2 处）、AppHandle（裸形态 + <R: Runtime> 泛型形态 +
- * tauri:: 路径形态，共 88 处）；Window/WebviewWindow 为防御性登记（现网未出现）。
- * 闭集外类型一律按数据参数进键集——未来若出现新注入形态，门禁以键名失配变红
- * 暴露，不会静默假绿（届时在此扩闭集）。
- */
 const INJECTED_TYPES = new Set(["State", "AppHandle", "Window", "WebviewWindow"]);
 
 function isInjectedType(typeText: string): boolean {
@@ -131,10 +88,6 @@ function isInjectedType(typeText: string): boolean {
   return m !== null && INJECTED_TYPES.has(m[1]);
 }
 
-/**
- * 解析参数列表文本：只认「参数名: 类型」形态（兼容 mut / r# 前缀，与 tauri 宏
- * 支持的 Pat::Ident 对应）；元组解构等形态不在闭集内，fail loud。
- */
 function parseParams(text: string): { params: RustParam[]; errors: string[] } {
   const params: RustParam[] = [];
   const errors: string[] = [];
@@ -149,13 +102,6 @@ function parseParams(text: string): { params: RustParam[]; errors: string[] } {
   return { params, errors };
 }
 
-/**
- * snake_case → lowerCamelCase，转换规则与 Tauri 参数绑定一致：tauri-macros 对参数名
- * 做 heck ToLowerCamelCase——按非字母数字切词、首词全小写、后续词首字母大写、
- * 词内小写化，数字不构成词边界（top_n → topN，s3_bucket → s3Bucket）。
- * 事故对照（#588）：Rust `top_n: Option<i64>` 期望键 `topN`，snake_case 键被静默
- * 绑定为 None。
- */
 export function toLowerCamelCase(name: string): string {
   const words = name.split(/[^A-Za-z0-9]+/).filter((w) => w.length > 0);
   if (words.length === 0) return "";
@@ -164,16 +110,6 @@ export function toLowerCamelCase(name: string): string {
     .join("");
 }
 
-/**
- * 扫描单个 Rust 源文本：裸 `#[tauri::command]` + 紧随 `pub fn` / `pub async fn`。
- * 扫描规则与 src-tauri/build.rs 同源同界：注解行必须紧随 fn 定义行，出现其他形态
- * （带参注解、cfg 条件、注解与 fn 之间插入属性行）即记入 errors——fail loud，
- * 未来扩展扫描规则时须同步改 build.rs 与本脚本（维护边界，见 ADR-0047）。
- * 注释先整文掩码再逐行扫（#1741 收口：共享原语 maskNonCode(text, true)，等长
- * 保位行号不变、字符串字面量保留、块注释一并掩掉），逐行 trim 后与掩码前同形。
- * 参数提取（#1398）只读签名：fn 匹配后从首个 `(` 累积到参数列表括号平衡，
- * 不改变上述 fn 形态识别规则。
- */
 export function scanRustSource(text: string): ScanResult {
   const names: string[] = [];
   const commands: RustCommand[] = [];
@@ -227,27 +163,16 @@ export function scanRustSource(text: string): ScanResult {
   return { names, commands, errors };
 }
 
-/**
- * invoke 调用形态（命令名 = 第 2 捕获组）：invoke('命令名') / invoke("命令名")，
- * 含 invoke<T>('命令名') 泛型形态；单双引号须配对（反引用回指）。模板字面量维持
- * 不支持（既有文档化取舍，评审兜底）。
- */
 const TS_INVOKE_PATTERN = /\binvoke(?:<[^>]*>)?\(\s*(['"])([^'"]+)\1/g;
 
-/** 在（已掩码注释的）文本上匹配全部 invoke 调用点，命令行号/实参由调用方按列位取原文 */
 function matchInvokeCalls(masked: string): RegExpExecArray[] {
   return [...masked.matchAll(TS_INVOKE_PATTERN)];
 }
 
-/**
- * 扫描 TS 调用面文本中的 invoke 命令名。识别前先掩码注释（复用 TS 侧掩码器具，
- * 与参数键名腿同口径，#1471）——注释掉的调用不计入真实调用面。
- */
 export function scanTsSource(text: string): string[] {
   return matchInvokeCalls(maskComments(text)).map((m) => m[2]);
 }
 
-/** 单个 invoke 调用点：命令名 + 实参对象字面量键 + 起始行（1 起算）+ 解析失败原因 */
 export interface TsInvokeCall {
   command: string;
   line: number;
@@ -255,7 +180,6 @@ export interface TsInvokeCall {
   problems: string[];
 }
 
-/** 跳过空白与注释，返回首个有效字符下标 */
 function skipTrivia(text: string, start: number): number {
   let i = start;
   while (i < text.length) {
@@ -275,7 +199,6 @@ function skipTrivia(text: string, start: number): number {
   return i;
 }
 
-/** 跳过字符串字面量，返回结束引号后的下标；未闭合 / 模板插值返回 -1 */
 function skipString(text: string, start: number): number {
   const quote = text[start];
   let i = start + 1;
@@ -291,7 +214,6 @@ function skipString(text: string, start: number): number {
   return -1;
 }
 
-/** 解析 invoke 命令名之后的实参部分：`)` 结束（无参形态）或对象字面量键集 */
 function parseArgsObject(text: string, start: number): { keys: string[]; problems: string[] } {
   const keys: string[] = [];
   const problems: string[] = [];
@@ -299,16 +221,15 @@ function parseArgsObject(text: string, start: number): { keys: string[]; problem
   if (i >= text.length) {
     return { keys, problems: ["invoke 实参截断（文件提前结束），拒绝猜测"] };
   }
-  if (text[i] === ")") return { keys, problems }; // 无参命令单参调用形态，键集为空
+  if (text[i] === ")") return { keys, problems };
   if (text[i] === ",") i = skipTrivia(text, i + 1);
   if (i >= text.length || text[i] !== "{") {
     return { keys, problems: ["实参不是对象字面量，无法静态核对参数键名"] };
   }
-  // 扫描对象字面量顶层内容：字符串 / 注释跳过，嵌套深度内的逗号不分隔
   const entries: string[] = [];
   let current = "";
   let depth = 0;
-  i++; // 吃掉 '{'
+  i++;
   while (i < text.length) {
     const c = text[i];
     if (c === "'" || c === '"' || c === "`") {
@@ -364,7 +285,6 @@ function parseArgsObject(text: string, start: number): { keys: string[]; problem
   return { keys, problems };
 }
 
-/** 实参条目 → 键名：显式 `key:` 或属性简写 `key`；展开 / 计算键等形态 fail loud */
 function finishEntries(entries: string[], problems: string[]): string[] {
   const keys: string[] = [];
   for (const raw of entries) {
@@ -384,7 +304,7 @@ function finishEntries(entries: string[], problems: string[]): string[] {
       continue;
     }
     if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(t)) {
-      keys.push(t); // 属性简写 { topN }
+      keys.push(t);
       continue;
     }
     problems.push(`实参键无法解析「${t}」，拒绝猜测`);
@@ -392,15 +312,9 @@ function finishEntries(entries: string[], problems: string[]): string[] {
   return keys;
 }
 
-/**
- * 扫描全部 invoke 调用点（与 scanTsSource 同一匹配边界）：命令形态在掩码文本上
- * 匹配（注释里的调用不算真实调用点，#1471），实参解析读原文——掩码等长保位，对象
- * 里的字符串/注释各由既有解析器跳过。
- */
 export function scanTsInvokeCalls(text: string): TsInvokeCall[] {
   const calls: TsInvokeCall[] = [];
   for (const m of matchInvokeCalls(maskComments(text))) {
-    // 行号定位消费家族共享单点 lineAt（#1680 收口内联行号计算副本）
     const line = lineAt(text, m.index);
     const { keys, problems } = parseArgsObject(text, m.index + m[0].length);
     calls.push({ command: m[2], line, keys, problems });
@@ -408,11 +322,6 @@ export function scanTsInvokeCalls(text: string): TsInvokeCall[] {
   return calls;
 }
 
-/** 扫描面：Rust 源文件扩展名闭集——消费库 RUST_EXTENSIONS（#1680 收口全等副本） */
-
-/** 收集目录下全部 .rs 文件：遍历机制归守门家族共享单点 walkTextFiles（#1625
- *  收口，#1637 起本脚本同源），localeCompare 排序保证输出确定；本脚本只需要
- *  绝对路径（读文件用），投影 abs。 */
 function collectRustFiles(dir: string): string[] {
   return walkTextFiles(dir, "", { extensions: RUST_EXTENSIONS }).map((f) => f.abs);
 }
@@ -423,9 +332,9 @@ function main(): void {
   const apiFile = process.argv[3] ?? join(repoRoot, "packages", "api", "src", "index.ts");
 
   const problems: string[] = [];
-  const rustByName = new Map<string, string>(); // 命令名 → 定义文件（重复定义保留首个并报错）
-  const rustKeys = new Map<string, string[]>(); // 命令名 → 期望键集（数据参数名 lowerCamelCase 后）
-  let rustParamTotal = 0; // 含注入参数的总参数数：参数提取是否真的跑过（空集哨兵用）
+  const rustByName = new Map<string, string>();
+  const rustKeys = new Map<string, string[]>();
+  let rustParamTotal = 0;
   let expectedKeyTotal = 0;
   for (const file of collectRustFiles(commandsDir)) {
     const { commands, errors } = scanRustSource(readFileSync(file, "utf8"));
@@ -453,9 +362,6 @@ function main(): void {
   const tsSet = new Set(scanTsSource(tsText));
   const tsCalls = scanTsInvokeCalls(tsText);
 
-  // 空集 fail loud（与 build.rs 空集 panic 同界）：任一侧扫不出命令都是灾难性信号
-  // （目录指错 / 扫描器失灵），不应以「0 ↔ 0 双向全等」假绿退出。参数侧同界：
-  // 命令扫到了却扫不出任何参数，是参数提取失灵的信号（#1398）。
   if (rustByName.size === 0) {
     problems.push(
       "✗ 未在命令目录扫描到任何 #[tauri::command]——目录为空或路径指错，拒绝以空集假绿通过",
@@ -483,13 +389,11 @@ function main(): void {
     );
   }
 
-  // 参数键名腿（issue #1398）：每命令每调用点，期望键集（Rust 数据参数名
-  // lowerCamelCase 后）↔ 实参字面量键双向全等；多处调用点键集须互相一致。
   const callsByCommand = new Map<string, TsInvokeCall[]>();
   for (const call of tsCalls) {
     if (!callsByCommand.has(call.command)) callsByCommand.set(call.command, []);
     callsByCommand.get(call.command)!.push(call);
-    if (!rustByName.has(call.command) || !tsSet.has(call.command)) continue; // 命令名腿已报，键名无从对起
+    if (!rustByName.has(call.command) || !tsSet.has(call.command)) continue;
     for (const p of call.problems) {
       problems.push(`✗ invoke('${call.command}')（api 第 ${call.line} 行）：${p}`);
     }
@@ -512,7 +416,7 @@ function main(): void {
     }
   }
   for (const [command, calls] of callsByCommand) {
-    if (calls.some((c) => c.problems.length > 0)) continue; // 解析失败的调用点已单独报
+    if (calls.some((c) => c.problems.length > 0)) continue;
     if (!rustByName.has(command) || !tsSet.has(command)) continue;
     const signatures = [...new Set(calls.map((c) => [...c.keys].sort().join(", ")))];
     if (signatures.length > 1) {
@@ -539,7 +443,6 @@ function main(): void {
   );
 }
 
-// 仅直接运行时执行 main；被测试/其他工具 import 时只取导出的扫描函数。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }

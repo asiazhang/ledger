@@ -4,7 +4,6 @@ import { mockInvoke } from "@ledger/test-support/invoke-mock";
 import { captureListenHandlers, type CapturedListener } from "@ledger/test-support/listen-mock";
 import { FX_SYNC_PROGRESS_EVENT, resetFxSyncForTest, useFxSync } from "@/settings/useFxSync";
 
-/** 命令契约静态快照：一次正常落库报告（与 ExchangeRateSyncSettings.test.ts 同形）。 */
 const REPORT = {
   full_backfilled: true,
   persist: {
@@ -23,7 +22,6 @@ beforeEach(() => {
   progressHandlers = captureListenHandlers();
 });
 
-/** 触发最近捕获的阶段事件监听器（tauri Event 载荷形状）。 */
 function fireProgress(payload: unknown): void {
   expect(progressHandlers.length).toBeGreaterThan(0);
   progressHandlers.at(-1)!({ event: FX_SYNC_PROGRESS_EVENT, payload });
@@ -208,7 +206,6 @@ describe("useFxSync 阶段文字（issue #1762）", () => {
     await flushPromises();
     expect(stageText.value).toContain("正在读取汇率文件");
 
-    // 首路先完成（Loadable 最新胜出下作废）：不得擦掉仍在途那路的阶段文字
     resolvers[0](REPORT);
     await p1;
     expect(syncing.value).toBe(true);
@@ -235,7 +232,6 @@ describe("useFxSync 阶段文字（issue #1762）", () => {
     const first = useFxSync();
     const p = first.sync();
 
-    // 切走再切回：新实例（重挂）看到同一份在途状态
     const second = useFxSync();
     expect(second.syncing.value).toBe(true);
 

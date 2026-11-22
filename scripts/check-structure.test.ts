@@ -14,17 +14,6 @@ import {
 } from "../scripts/check-structure.ts";
 import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 
-// 被测对象是仓库工具脚本 scripts/check-structure.ts（结构守门，ADR-0056）。
-// 脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun') 与门槛
-// 调用同款拉起，测的就是门槛路径。
-// 按测试决策守门行为只测外部可观察结果——进程退出码与输出，不测内部函数；
-// 通过位置参数把扫描目标指向临时夹具目录。
-// 原语级测试面（maskNonCode 语料 / lineAt / walkTextFiles / maskComments）已迁
-// scripts/gate-primitives.test.ts（#1680 库归库、门归门）：库的正确性由库自己的
-// 测试面证明，本文件只测结构守门的门级行为（spawnSync 外部可观察结果）。
-// 夹具自足化（#1595 / T2-3）：每个 crate 的模块面由用例显式声明
-// `{crate, dir, libRs, files}`——合成 lib.rs 文本 + 合成磁盘布局一次生成，
-// 不再有「相对路径 → 目标 crate」的路由链，也不 import 已退役的手写模块清单。
 const script = gateScript("check-structure.ts");
 const run = (args: readonly string[]) => runGateScript(script, args);
 
@@ -33,41 +22,25 @@ afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-/** 夹具桩内容（无壳层依赖的最小 Rust 文件） */
 const STUB = "// 结构守门夹具桩\npub fn stub() {}\n";
 
-/** 当期入口闭集在册成员的夹具桩（含一笔生产调用，#1692）：骨架自足化——每个
- *  在册成员文件都存在且恰有一处调用，骨架默认全绿。 */
 const CONVERT_CALL_STUB =
   "// 当期入口调用方闭集夹具桩\n" +
   "pub fn read_path_sum() -> i64 {\n" +
   '    amount::convert_to_native_current(conn, 1, "CNY")\n' +
   "}\n";
 
-/** 夹具用现存的壳层引用形态（商户壳层命令）：参考数据三域 #404 归位后账户壳层已无
- *  `*_internal` 下沉函数，夹具文本取现存壳层命令与实际结构保持一致。 */
 const shellUse = "use crate::commands::merchants::list_merchants;\npub fn x() {}\n";
 
-/**
- * 用例夹具的显式 crate 模块面声明（#1595 T2-3）：`libRs` 是 crate 根 `lib.rs` 的
- * 声明文本，`files` 是相对 crate `src` 的模块文件与内容——合成声明面与合成磁盘
- * 布局由此一次生成，测试不依赖守门脚本的清单常量。
- */
 interface CrateCase {
-  /** crate 名（与 CRATES 政策核成员一致；报文定位用） */
   crate: string;
-  /** crate 目录（相对 src-tauri） */
   dir: string;
-  /** crate 根 lib.rs 内容（mod 声明面；空串=无模块的声明面） */
   libRs: string;
-  /** 模块文件：相对 crate src 的路径 → 内容 */
   files: Record<string, string>;
 }
 
-/** infra crate 根 lib.rs 的 test_utils「放行测试」cfg 门（同真实仓库，ADR-0111 决策 5）。 */
 const INFRA_TEST_UTILS_GATE = '#[cfg(any(test, feature = "test-utils"))]\n#[doc(hidden)]\n';
 
-/** 基础设施 crate 的骨架形状（与真实仓库同形：db / error / test_utils 生产编译门）。 */
 const INFRA_CASE: CrateCase = {
   crate: "ledger-infra",
   dir: "crates/infra",
@@ -88,7 +61,6 @@ const INFRA_CASE: CrateCase = {
   },
 };
 
-/** 核心交易域 crate 的骨架形状（四区目录与区归属政策表一致，供区级层序用例消费）。 */
 const TRANSACTION_CASE: CrateCase = {
   crate: "ledger-transaction",
   dir: "crates/transaction",
@@ -107,7 +79,6 @@ const TRANSACTION_CASE: CrateCase = {
   },
 };
 
-/** 同步协议 crate 的骨架形状（协议面模块，供协议分层用例消费）。 */
 const PROTOCOL_CASE: CrateCase = {
   crate: "ledger-sync-protocol",
   dir: "crates/sync-protocol",
@@ -115,24 +86,20 @@ const PROTOCOL_CASE: CrateCase = {
   files: { "op.rs": STUB },
 };
 
-/** 骨架默认模块面：每 crate 一枚 core 模块；特定形状的 crate 用常量覆盖。 */
 function defaultCase(crate: string, dir: string): CrateCase {
   return { crate, dir, libRs: "pub mod core;\n", files: { "core.rs": STUB } };
 }
 
-/** 骨架里形状特殊的 crate（键 = crate 名；其余成员用 defaultCase 的默认形状）。 */
 const SPECIAL_CASES = new Map<string, CrateCase>([
   [INFRA_CASE.crate, INFRA_CASE],
   [TRANSACTION_CASE.crate, TRANSACTION_CASE],
   [PROTOCOL_CASE.crate, PROTOCOL_CASE],
 ]);
 
-/** 骨架成员 crate 的模块面（显式声明；模块名不必与真实仓库相同，机制面一致即可）。 */
 const SKELETON_CASES: readonly CrateCase[] = CRATES.filter((crate) => crate.dir !== ".").map(
   (crate) => SPECIAL_CASES.get(crate.name) ?? defaultCase(crate.name, crate.dir),
 );
 
-/** 账户域 crate 的模块面声明（域侧扫描用例的靶；`core.rs` 可被覆盖为违规内容）。 */
 function accountsCase(files: Record<string, string> = {}, libRs = "pub mod core;\n"): CrateCase {
   return {
     crate: "ledger-accounts",
@@ -142,7 +109,6 @@ function accountsCase(files: Record<string, string> = {}, libRs = "pub mod core;
   };
 }
 
-/** 基础设施 crate 的模块面声明（在骨架形状上覆盖文件/声明面，供基础层用例消费）。 */
 function infraCase(files: Record<string, string> = {}, libRs?: string): CrateCase {
   return {
     ...INFRA_CASE,
@@ -151,7 +117,6 @@ function infraCase(files: Record<string, string> = {}, libRs?: string): CrateCas
   };
 }
 
-/** 交易域 crate 的模块面声明（在骨架形状上覆盖文件，供区级层序用例消费）。 */
 function transactionCase(files: Record<string, string> = {}, libRs?: string): CrateCase {
   return {
     ...TRANSACTION_CASE,
@@ -160,45 +125,30 @@ function transactionCase(files: Record<string, string> = {}, libRs?: string): Cr
   };
 }
 
-/** 同步协议 crate 的模块面声明（协议分层用例的靶）。 */
 function protocolCase(files: Record<string, string> = {}): CrateCase {
   return { ...PROTOCOL_CASE, files: { ...PROTOCOL_CASE.files, ...files } };
 }
 
-/** workspace 骨架夹具的可覆盖面（缺省为一份全绿的骨架）。 */
 interface CrateFixtureOverrides {
   rootManifest?: string;
-  /** 覆盖成员 crate 的 Cargo.toml：crate 目录（相对 src-tauri）→ 清单文本 */
   memberManifests?: Record<string, string>;
-  /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
   infraLibRs?: string;
-  /** 覆盖 `crates/infra/src/error.rs` 内容（http 投影 impl cfg 门负向夹具） */
   infraErrorRs?: string;
-  /** 覆盖 `src/api_server/handlers/import.rs` 内容（投资五节锚点 cfg 门负向夹具，#1185） */
   apiServerImportRs?: string;
-  /** 覆盖 `src/api_server/mod.rs` 内容（投资五节锚点再导出 cfg 门负向夹具，#1185） */
   apiServerModRs?: string;
-  /** 覆盖根包 `[dependencies]` 的 ledger-infra 行（生产依赖接线负向夹具） */
   rootInfraProdDep?: string;
-  /** 追加到根包 `[features]` 段的原文行（default feature 负向夹具） */
   rootFeaturesExtra?: string;
   checkSh?: string;
   testSh?: string;
   lintFixSh?: string;
-  /** 覆盖 `scripts/test-exec.ts`（cargo 命令宿主，workspace 范围负向夹具，#1112） */
   testExecTs?: string;
   workflow?: string;
-  /** 追加一个未登记的成员目录（crates/<name>）——新 crate 漏登记的负向夹具 */
   orphanCrate?: string;
-  /** 当期入口闭集：不写出的在册成员文件（缺文件负向夹具，#1692） */
   omitConvertCallers?: readonly string[];
-  /** 当期入口闭集：在册成员文件内容覆写（零调用负向夹具，#1692） */
   convertCallerContent?: Record<string, string>;
-  /** 覆盖用例声明的 crate 模块面（{crate, dir, libRs, files}，#1595 T2-3） */
   moduleCases?: readonly CrateCase[];
 }
 
-/** 六件套 deny 声明（workspace 级唯一声明处，ADR-0060） */
 const LINT_DENIES = [
   'unwrap_used = "deny"',
   'expect_used = "deny"',
@@ -208,7 +158,6 @@ const LINT_DENIES = [
   'unreachable = "deny"',
 ].join("\n");
 
-/** 成员 crate 清单骨架：门禁继承 + dev-dependency 测试环（与真实仓库同形）。 */
 function memberManifest(name: string): string {
   return [
     "[package]",
@@ -225,7 +174,6 @@ function memberManifest(name: string): string {
   ].join("\n");
 }
 
-/** infra 清单骨架：http 投影门宿主（axum optional + `http = ["dep:axum"]`，default 不含 http）。 */
 const INFRA_MANIFEST = [
   "[package]",
   'name = "ledger-infra"',
@@ -244,19 +192,12 @@ const INFRA_MANIFEST = [
   "",
 ].join("\n");
 
-/** 写夹具文件（相对 crate src）：自动建档目录。 */
 function writeCrateFile(srcTauri: string, dir: string, rel: string, content: string): void {
   const abs = join(srcTauri, dir, "src", rel);
   mkdirSync(join(abs, ".."), { recursive: true });
   writeFileSync(abs, content);
 }
 
-/**
- * 建 workspace 骨架夹具：`<root>/src-tauri/{Cargo.toml,src,crates/*}` + 仓库根门槛
- * 宿主（scripts/check.sh、scripts/test.sh、.github/workflows/build.yml）。成员清单
- * 自 `CRATES` 政策核（成员登记核对的唯一对象），模块面自用例声明的 `{crate, dir,
- * libRs, files}`（#1595 T2-3）。返回脚本参数 `[src-dir, src-tauri-dir]`。
- */
 function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   const root = mkdtempSync(join(tmpdir(), "check-structure-crate-"));
   tempDirs.push(root);
@@ -297,17 +238,12 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   const cases = new Map<string, CrateCase>();
   for (const c of SKELETON_CASES) cases.set(c.dir, c);
   for (const c of overrides.moduleCases ?? []) {
-    // 夹具自足化要求用例显式声明成员 crate：声明与政策核不符即夹具自身出错（否则
-    // 错字会让用例静默落在骨架默认形状上、变绿变假）。
     const member = CRATES.find((crate) => crate.dir === c.dir);
     if (member === undefined || member.name !== c.crate) {
       throw new Error(`夹具声明与 CRATES 政策核不一致：${c.crate} / ${c.dir}`);
     }
     cases.set(c.dir, c);
   }
-  // 当期入口调用方闭集的在册成员面（#1692）：为每个在册 crate 文件补 lib.rs 声明
-  // 与含调用的桩（骨架自足化，与模块面用例显式声明同一理由）；先克隆再改写，
-  // 骨架常量对象跨夹具共享，不得原地变异。omitConvertCallers 留给缺文件负向用例。
   const omitCallers = new Set(overrides.omitConvertCallers ?? []);
   const callerContent = (file: string): string =>
     overrides.convertCallerContent?.[file] ?? CONVERT_CALL_STUB;
@@ -316,8 +252,6 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
     const rest = entry.file.slice("crates/".length);
     const slash = rest.indexOf("/");
     const crateDir = `crates/${rest.slice(0, slash)}`;
-    // files 键含 .rs 后缀（与磁盘文件同名），mod 声明名去后缀——两者不同源，混用
-    // 会写出无后缀文件、被模块面投影当目录扫而 ENOTDIR。
     const fileName = rest.slice(slash + 1).replace(/^src\//, "");
     const key = fileName.replace(/\.rs$/, "");
     let spec = cases.get(crateDir);
@@ -357,7 +291,6 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
     writeFileSync(join(srcTauri, INFRA_SRC_REL, "error.rs"), overrides.infraErrorRs);
   }
 
-  // 根包壳层面：lib.rs、白名单政策项（test_support）与投资五节锚点（#1185）。
   mkdirSync(join(srcTauri, "src", "test_support"), { recursive: true });
   writeFileSync(join(srcTauri, "src", "lib.rs"), "pub fn stub() {}\n");
   writeFileSync(join(srcTauri, "src", "test_support", "mod.rs"), STUB);
@@ -377,7 +310,6 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "pub use handlers::import::INVESTMENT_SECTION_HEADERS;\n",
   );
 
-  // 当期入口闭集的根 src 在册成员（#1692）：与 crate 面同款自足化写出。
   for (const entry of CONVERT_CURRENT_CALLERS) {
     if (omitCallers.has(entry.file) || !entry.file.startsWith("src/")) continue;
     const abs = join(srcTauri, entry.file);
@@ -438,7 +370,6 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   return [join(srcTauri, "src"), srcTauri];
 }
 
-/** 骨架 + 用例声明的目标 crate 模块面（#1595 T2-3：{crate, dir, libRs, files}）。 */
 function fixtureWith(caseSpec: CrateCase, overrides: CrateFixtureOverrides = {}): string[] {
   return makeCrateFixture({
     ...overrides,
@@ -448,7 +379,6 @@ function fixtureWith(caseSpec: CrateCase, overrides: CrateFixtureOverrides = {})
 
 describe("check-structure（结构守门）", () => {
   it("真实仓库默认通过：模块面由 lib.rs 声明投影 + 白名单对壳层零依赖（T2-3 判据①）", () => {
-    // 真实仓库自检绿是唯一能发现「派生器认不出仓库实际形态」的测试。
     const r = run([]);
     expect(r.status).toBe(0);
     expect(r.output).toContain("零依赖");
@@ -456,7 +386,6 @@ describe("check-structure（结构守门）", () => {
     expect(r.output).toContain(`crate 模块面 ${CRATE_MODULE_TARGETS.length} 份`);
     const domainCount = WHITELIST.filter((w) => w.layer === LAYER.DOMAIN).length;
     expect(r.output).toContain(`域目录 ${domainCount}`);
-    // 投影覆盖全等（防派生器静默丢成员）：每个非根包政策核成员恰有一份模块面。
     const memberCrates = CRATES.filter((crate) => crate.dir !== ".");
     expect(CRATE_MODULE_TARGETS.length).toBe(memberCrates.length);
     expect([...CRATE_MODULE_TARGETS].map((t) => t.srcRel).sort()).toEqual(
@@ -471,7 +400,6 @@ describe("check-structure（结构守门）", () => {
   });
 
   it("白名单政策项代码引用壳层 → 失败并定位文件行号", () => {
-    // 全部业务域 crate 化后，根包仅余测试支持域（test_support）一条政策项。
     const args = makeCrateFixture();
     writeCrateFile(args[1], ".", "test_support/crud.rs", shellUse);
     const r = run(args);
@@ -507,9 +435,6 @@ describe("check-structure（结构守门）", () => {
   });
 
   it("别名引入（use … as）同样识别为依赖（根 src 白名单面）", () => {
-    // 跨 crate 面（如 ledger-infra 内的 `crate::commands`）自 #1596 起归编译期；
-    // 仅存的壳层反向依赖文本扫描面 = 根包 src 白名单（test_support 与 commands
-    // 同居根包，属同 crate 引用）。
     const args = makeCrateFixture();
     writeCrateFile(
       args[1],
@@ -590,8 +515,6 @@ describe("check-structure 模块面投影核对（#1595：expected 由 lib.rs mo
   });
 
   it("文件模块与目录模块同名共存（transport.rs + transport/）→ 绿（声明面与磁盘双向全等）", () => {
-    // `mod transport;` 在 Rust 里同时允许 transport.rs（模块本体）与 transport/
-    // （子模块目录）——磁盘枚举按模块键判等，不因同名报孤儿。
     const args = fixtureWith({
       crate: "ledger-sync-engine",
       dir: "crates/sync-engine",
@@ -692,20 +615,10 @@ describe("check-structure 模块面投影核对（#1595：expected 由 lib.rs mo
 });
 
 describe("check-structure 跨 crate 依赖方向（#1596 cargo 退役 / ADR-0071 修订注记）", () => {
-  /**
-   * 退役留痕（#1596 / ADR-0056 决策 4 修订注记）：跨 crate 越界方向的源码文本
-   * 扫描退役——未声明依赖即编译失败（cargo 强于文本扫描：`use crate::x as y`
-   * 别名改写对文本不可达、编译期逃不掉），已声明的越界方向由 crate 边界核对按
-   * `Cargo.toml` 声明面判定（层秩 + 业务域→多端同步域禁令）。下列用例把原
-   * 「文本扫描红」钉成「文本扫描不再报红」——退役不得静默回潮（扫描若被恢复，
-   * 本组变红）。逐族编译错误证据见 PR #1605。
-   */
-  /** 成员 crate 清单桩：依赖面 + 门禁继承。 */
   const crateManifest = (name: string, deps: string): string =>
     `[package]\nname = "${name}"\nversion = "0.6.0"\nedition = "2024"\n\n` +
     `[dependencies]\n${deps}\n\n[lints]\nworkspace = true\n`;
 
-  /** infra 清单桩：带 http 投影门 features/axum 形态 + 给定 dev-dependency 行。 */
   const infraFixtureManifest = (devDeps: string): string =>
     '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
     '[features]\nhttp = ["dep:axum"]\n\n' +
@@ -713,9 +626,6 @@ describe("check-structure 跨 crate 依赖方向（#1596 cargo 退役 / ADR-0071
     `[dev-dependencies]\n${devDeps}\n\n[lints]\nworkspace = true\n`;
 
   it("基础设施文件引用域模块 / 域 crate 模块引用壳层 → 文本扫描已退役（红源换为编译期）", () => {
-    // `crate::test_support` 在 ledger-infra 内即 `ledger_infra::test_support`——不存在；
-    // 即便写成 `tauri_app_lib::test_support`，dev-dependency 也只对测试目标可见，
-    // 生产面编译失败。原文扫描已无靶向价值。
     expect(
       run(
         fixtureWith(
@@ -735,8 +645,6 @@ describe("check-structure 跨 crate 依赖方向（#1596 cargo 退役 / ADR-0071
   });
 
   it("域 crate 模块引用同步域 → 文本扫描已退役（红源换为编译期 / 声明面禁令）", () => {
-    // `crate::sync_engine` 在域 crate 内编不过；`ledger_sync_engine::` 必伴随声明
-    // 依赖，由 crate 边界禁令拦下（负向夹具见下）。
     const args = fixtureWith(
       accountsCase({ "core.rs": "use crate::sync_engine::engine::ReplayEffect;\npub fn x() {}\n" }),
     );
@@ -744,9 +652,6 @@ describe("check-structure 跨 crate 依赖方向（#1596 cargo 退役 / ADR-0071
   });
 
   it("基础设施 dev-dependency 反向依赖更高层 crate 未留痕 → 红（换载体：声明面核对）", () => {
-    // cargo 对 dev-dependency 环放行（测试目标与生产依赖图分离），是编译期盲区：
-    // 基础设施对业务域 crate 的 dev-dependency 须逐条留痕于
-    // INFRA_DOMAIN_ALLOWED_EDGES，清单之外的声明即红。
     const args = makeCrateFixture({
       memberManifests: {
         "crates/infra": infraFixtureManifest('ledger-policy = { path = "../policy" }'),
@@ -848,8 +753,6 @@ describe("check-structure 基础设施 crate 内块间禁边（ADR-0111 决策 4
   });
 
   it("块间禁边两形态都入扫描：db.rs（单文件模块）注入违规同样红", () => {
-    // 目录形态（db/helper.rs）由上一枚用例覆盖；本用例锁单文件模块形态
-    // （db.rs）——两形态都在扫描面内（条目由声明投影，不因形态不同漏扫）。
     const args = fixtureWith({
       crate: "ledger-infra",
       dir: "crates/infra",
@@ -1086,9 +989,6 @@ describe("check-structure 原生事务语句禁令（issue #1014 / #1003 定案 
 });
 
 describe("check-structure 交易域区级层序（ADR-0113 决策 7 / #1181 / #1597）", () => {
-  // 负向夹具各由一条断言锚定（ADR-0087 断言强度，断言对准退出码与输出）：
-  // 区级层序、根级单文件、未登记区目录各有一枚夹具；删任一条断言须动脚本
-  //（清单外无豁免面），对应夹具转绿 → 该夹具测试失败（CI 红）。
   it("④ 根级单文件必须进区目录（fail loud）→ 红（#1597，删除检查即变红）", () => {
     const args = fixtureWith(
       transactionCase({ "search_semantics.rs": STUB }, TRANSACTION_CASE.libRs),
@@ -1111,9 +1011,6 @@ describe("check-structure 交易域区级层序（ADR-0113 决策 7 / #1181 / #1
   });
 
   it("区目录表与真实仓库顶层区目录全等（#1597）：zone 表无悬空行、顶层目录全有区归属", () => {
-    // 常量表核对无法经夹具红，用双向全等锚替代（同登记面长度锚先例）：新增 /
-    // 删除区目录而 zone 表不同步 → 本断言红；zone 表悬空行同理。真实仓库自检
-    //（run([])）同样照 zone 表判向，两侧互为见证。
     const srcDir = join(process.cwd(), "src-tauri", "crates", "transaction", "src");
     const dirs = readdirSync(srcDir, { withFileTypes: true })
       .filter((e) => e.isDirectory() && e.name !== "tests")
@@ -1463,10 +1360,8 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
   });
 
   it("全成员 crate 生产依赖壳层 crate → 逐个红（旧逐 crate describe 的声明面覆盖等价）", () => {
-    // 逐 crate 覆盖等价（#1596 前 12 个逐域 describe 各测本 crate 的声明面红线）：
-    // 声明面核对对每个成员 crate 都成立，任一 crate 掉出核对面即此处红。
     for (const crate of CRATES) {
-      if (crate.dir === ".") continue; // 根包即壳层自身
+      if (crate.dir === ".") continue;
       const manifest =
         `[package]\nname = "${crate.name}"\nversion = "0.6.0"\nedition = "2024"\n\n` +
         '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n';

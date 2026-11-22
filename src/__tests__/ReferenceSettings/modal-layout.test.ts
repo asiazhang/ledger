@@ -4,17 +4,6 @@ import MerchantEditModal from "@/merchants/MerchantEditModal.vue";
 import CategoryEditModal from "@/categories/CategoryEditModal.vue";
 import type { Merchant, Category } from "@ledger/types";
 
-// 参考数据管理弹窗排版统一（issue #637，spec #630）：商户编辑与分类编辑
-// 两弹窗卡片外观收敛为 AppModal cardSize 单一声明——均归 sm（420），
-// 显式 style 宽度由 cardSize 承担，无边框由 AppModal 默认承担；按钮行从
-// 单颗全宽 block 主键改为右对齐单主键（保留无取消键的轻量语义）。断言
-// 只看组件可观察输出（卡片宽度样式、边框类、按钮行排列），不深究
-// naive-ui 内部实现。
-//
-// 本文件无 invoke 布线需求：弹窗为纯 props 表单；消息替身用全局稳定实例
-// （setup.ts 统一 mock，issue #748 后不再自建 vi.hoisted 实例），清理四件套
-// 由全局壳层每测自动执行。
-
 const mockMerchant: Merchant = {
   id: "mch-1",
   name: "京东",
@@ -38,20 +27,17 @@ const mockCategory: Category = {
   is_deleted: false,
 };
 
-/** 卡片根元素（preset="card" 下卡片即 NCard 根；单测内同时只挂一个弹窗）。 */
 function modalCard(): HTMLElement {
   const card = document.body.querySelector<HTMLElement>(".n-card");
   expect(card, "弹窗卡片（NCard）应存在").not.toBeNull();
   return card!;
 }
 
-/** 断言弹窗卡片：宽度归 sm 档（420）+ 默认无边框（AppModal 默认，调用点不再显式声明）。 */
 function expectCardSizeSm(card: HTMLElement) {
   expect(card.style.width).toBe("420px");
   expect(card.classList.contains("n-card--bordered")).toBe(false);
 }
 
-/** 断言按钮行：保存主键右对齐（NSpace justify="end"），且不再是全宽 block。 */
 function expectRightAlignedSinglePrimary(card: HTMLElement, text: string) {
   const btn = Array.from(card.querySelectorAll("button")).find(
     (b) => b.textContent?.trim() === text,

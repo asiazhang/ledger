@@ -18,7 +18,7 @@
 - **HTTP 端点**：读实际路由、对应 API 契约和 API 集成测试；仅在属于 AI 导入时读取 AI 导入文档。
 - **Issue、PR、triage 或依赖关系**：按需读 `docs/agents/issue-tracker.md` 与 `docs/agents/triage-labels.md`。
 - **依赖升级、工具链 bump 或发布打 tag**：升级读 `docs/agents/dependency-upgrades.md`；发布用 `/run-release`，版本元数据与 `CHANGELOG.md` 由该流程更新。
-- **测试改动或脚本/质量检查**：测试读 `docs/contexts/CONTEXT-testing.md`；脚本改动先读目标脚本头部注释，脚本当前行为是真源。
+- **测试改动或脚本/质量检查**：测试读 `docs/contexts/CONTEXT-testing.md`；脚本当前行为是真源——注释禁令零容忍（豁免闭集外全仓禁注释、新增即红，ADR-0145），新脚本一律零注释，规则出处查守门挂载登记与 ADR。
 
 代码行为与词汇表不一致时，按可验证行为修正词汇表。代码行为与 ADR 冲突时，先显式报告冲突，确认决策后再修改 ADR 或实现。
 
@@ -38,14 +38,14 @@ Rust 根（`src-tauri/`）是 workspace：根包仍是 tauri 应用包（壳层�
 
 协议（`ledger-sync-protocol`）：多端同步的最底层共享协议，内容清单见 `check-structure.ts` 的 CRATES；业务域只依赖协议 crate，不依赖多端同步域。
 
-门禁保底：clippy 六件套唯一声明处在 workspace 级 `[workspace.lints.clippy]`，成员必须显式 `[lints] workspace = true` 继承；静态检查与测试命令显式 `--workspace` 覆盖全部成员。结构边界由 `bun scripts/check-structure.ts` 守门（守门脚本运行时 = Bun，ADR-0083）：crate 边界**政策核**是脚本内 `CRATES` 清单（成员登记、分层、允许依赖方向），模块级白名单与认许边继续辖编译器看不见的规则，逐条留痕在脚本内（ADR-0056 决策 4、ADR-0071 修订注记）；守门数据按「事实有权威源就投影，政策无源就显式」分界（#1591 定案，实施 #1593–#1595：模块清单由各 crate `lib.rs` 的 `mod` 声明投影、注记归 crate `//!` 与模块文件头、cargo 编译期已拒绝的方向退役给编译期）。
+门禁保底：clippy 六件套唯一声明处在 workspace 级 `[workspace.lints.clippy]`，成员必须显式 `[lints] workspace = true` 继承；静态检查与测试命令显式 `--workspace` 覆盖全部成员。结构边界由 `bun scripts/check-structure.ts` 守门（守门脚本运行时 = Bun，ADR-0083）：crate 边界**政策核**是脚本内 `CRATES` 清单（成员登记、分层、允许依赖方向），模块级白名单与认许边继续辖编译器看不见的规则，逐条留痕在脚本内（ADR-0056 决策 4、ADR-0071 修订注记）；守门数据按「事实有权威源就投影，政策无源就显式」分界（#1591 定案，实施 #1593–#1595：模块清单由各 crate `lib.rs` 的 `mod` 声明投影、注记归 ADR 本体与守门脚本数据面——原「归 crate `//!` 与模块文件头」随代码注释禁令废止（ADR-0145）、cargo 编译期已拒绝的方向退役给编译期）。
 
 ## 数据与交易
 
 - 金额以整数分表达；用户展示统一调用 `formatAmount`，金额换算和展示口径集中维护。
 - 交易写入改动须保持 Writer、行为编排、定时执行、批量导入和投资路径的既有接缝契约一致；新增路径前先核对各入口。
 - 账户余额与净资产读持久化缓存（V017，ADR-0067）：写路径在既有事务内对受影响账户整体重算，禁止增量加减；缓存行缺失报码化错误，不静默回退。
-- 多语句读闭包（同屏口径跨语句：总量=分量和、分子分母同时点、页与总数、读数↔汇率折算）经 `ensure_transaction` 收进同一读事务（#1699 / #1702，策略陈述住 `tx_scope` 模块文档）；新增此类读闭包同此纪律，验收带读快照探针测试（删除接线即红），已接线闭集与同根因残留候选核对清单见 #1699 / #1702 交付报告。
+- 多语句读闭包（同屏口径跨语句：总量=分量和、分子分母同时点、页与总数、读数↔汇率折算）经 `ensure_transaction` 收进同一读事务（#1699 / #1702，策略见 ADR-0084 修订注记与本条款）；新增此类读闭包同此纪律，验收带读快照探针测试（删除接线即红），已接线闭集与同根因残留候选核对清单见 #1699 / #1702 交付报告。
 
 ## 前端与入口
 
@@ -53,7 +53,7 @@ Rust 根（`src-tauri/`）是 workspace：根包仍是 tauri 应用包（壳层�
 - 会影响快捷键抑制的交互层通过现有 `App*` 封装或 `useAppDialog` 接入 Overlay Suppression；新增形态先补对应封装和注册表接线。
 - 新增 IPC 命令：放入已声明并扁平再导出的命令模块，由构建扫描器生成注册表，再同步前端 API/类型并运行一致性检查。新增 HTTP-only 端点走 API 契约与 API 集成测试，不增加无关 IPC 调用面。
 - 用户可见文案经 i18n；后端用户可见错误使用码化错误构造器，并同步错误模板。
-- naive-ui 页签组含 `display-directive="show"` / `"show:lazy"` 页签（预取/状态保留语义依赖组件实例身份）时，该组全部 `NTabPane` 必须带 `key`（= 页签名）：无 key 时 Vue 按位置就地复用同类型 pane 组件，切页签即插槽换血重挂重拉，`show` 语义失效（先例：投资页概览→盈亏切换重挂重拉，机制注释与回归测试见 `src/views/InvestmentsView.vue`、`src/__tests__/InvestmentsView.test.ts`）。
+- naive-ui 页签组含 `display-directive="show"` / `"show:lazy"` 页签（预取/状态保留语义依赖组件实例身份）时，该组全部 `NTabPane` 必须带 `key`（= 页签名）：无 key 时 Vue 按位置就地复用同类型 pane 组件，切页签即插槽换血重挂重拉，`show` 语义失效（先例：投资页概览→盈亏切换重挂重拉，回归测试见 `src/__tests__/InvestmentsView.test.ts`）。
 
 ## 测试、工作流与发布
 

@@ -2,14 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import { useFocusParam } from "@/composables/useFocusParam";
 import type { LocationQuery } from "vue-router";
 
-/**
- * focus 消费助手模块测试（spec #704 / issue #705，词汇表「实体定位参数
- * （focus 参数）」）：工厂零外部依赖（不接 router、不接 store、不接组件），
- * 以普通 query 对象直打——读一次语义（消费即失效、空转封闸、迟到丢弃、
- * 刷新经新实例重定位）全部落在 consume() 的可观察行为上。
- */
-
-/** 快捷构造：以给定 query 对象建厂（getter 包一层，工厂只经它读取）。 */
 function make(query: LocationQuery, onFocus: (id: string) => void = vi.fn()) {
   return { helper: useFocusParam({ query: () => query, onFocus }), onFocus };
 }
@@ -52,7 +44,7 @@ describe("useFocusParam 消费一次", () => {
     const query: LocationQuery = { focus: "pol1" };
     const { helper, onFocus } = make(query);
     helper.consume();
-    query.focus = "pol2"; // 同实例后续到达的新定位意图
+    query.focus = "pol2";
     helper.consume();
     expect(onFocus).toHaveBeenCalledTimes(1);
     expect(onFocus).toHaveBeenCalledWith("pol1");
@@ -61,7 +53,7 @@ describe("useFocusParam 消费一次", () => {
   it("空转即封闸：首次 consume 无 focus，此后 focus 在场也不再消费（挂载时消费一次即失效）", () => {
     const query: LocationQuery = {};
     const { helper, onFocus } = make(query);
-    helper.consume(); // 挂载（无 focus）：安全空转，同时耗尽本实例唯一一次读取
+    helper.consume();
     query.focus = "pol1";
     helper.consume();
     expect(onFocus).not.toHaveBeenCalled();

@@ -13,8 +13,6 @@ import type {
   TransactionTrade,
 } from "@ledger/types";
 
-/** 在用目标账户绑定集（issue #1755）：goals store 进度快照变量，每测复位、
- *  用例内赋值（布线闭包按调用时刻取值，赋值时机在布线之后也生效）。 */
 let goalProgress: SavingsGoalProgress[] = [];
 
 const mockAccounts: Account[] = [
@@ -103,14 +101,14 @@ const editingTrade: TransactionTrade = {
   instrument_name: "英伟达",
   instrument_type: "stock",
   quantity: 100,
-  price_cents: 1500000, // 150 元（万分之一元刻度）
+  price_cents: 1500000,
   fee_cents: 500,
 };
 
 const editingFundTx: Transaction = {
   ...editingTx,
   id: "txn-fund-1",
-  amount_cents: 100000, // 确认单整分金额 1000 元（权威）
+  amount_cents: 100000,
 };
 
 const editingFundTrade: TransactionTrade = {
@@ -119,11 +117,10 @@ const editingFundTrade: TransactionTrade = {
   instrument_name: "某混合基金",
   instrument_type: "fund",
   quantity: 987.6543,
-  price_cents: 10110, // 反算净值 1.0110 元（万分之一元刻度）
+  price_cents: 10110,
   fee_cents: 150,
 };
 
-/** 表单布线：list_accounts 参考命令本场景需自定义值（acc-inv「证券户」，overrides 优先于参考兜底）。 */
 const BASE_OVERRIDES = { list_accounts: mockAccounts };
 
 describe("useInvestmentForm", () => {
@@ -150,7 +147,6 @@ describe("useInvestmentForm", () => {
     await form.submit();
     form.instrumentId.value = "ins-1";
     await form.submit();
-    // 格式类错误（数量为空）由红态＋禁用接住，静默中止（ADR-0058）
     await form.submit();
     form.quantityText.value = "10";
     await form.submit();
@@ -173,12 +169,9 @@ describe("useInvestmentForm", () => {
 
     await form.submit();
 
-    // 提交路由：创建命令 + 正确 kind；wire 字段形状（含 buy 占位语义）由装配器
-    // 测试承担（issue #216）
     expect(mockInvoke).toHaveBeenCalledWith("create_transaction", {
       input: expect.objectContaining({ kind: "buy" }),
     });
-    // 创建成功后重置业务字段（数量/价格文本同清、时机标志同清不留潜伏红态，#416）
     expect(form.instrumentId.value).toBeNull();
     expect(form.quantityText.value).toBe("");
     expect(form.priceText.value).toBe("");
@@ -187,7 +180,6 @@ describe("useInvestmentForm", () => {
   });
 
   describe("基金申赎形态（issue #302）：金额权威、单价反算", () => {
-    /** 远程搜索填充基金候选（防抖 300ms，仿本文件 fake-timer 惯例） */
     async function searchFundCandidates(kind: "buy" | "sell") {
       vi.useFakeTimers();
       try {
@@ -213,7 +205,6 @@ describe("useInvestmentForm", () => {
       const form = await searchFundCandidates("buy");
       form.instrumentId.value = "ins-fund";
       expect(form.isFundInstrument.value).toBe(true);
-      // (100000 − 150) × 100 ÷ 987.6543 = 10109.81… → 10110 → 1.0110 元
       form.amount.value = 1000;
       form.quantityText.value = "987.6543";
       form.fee.value = 1.5;
@@ -257,7 +248,6 @@ describe("useInvestmentForm", () => {
       form.amount.value = 520;
       form.quantityText.value = "500";
       form.fee.value = 0.52;
-      // (52000 + 52) × 100 ÷ 500 = 10410.4 → 10410 → 1.0410 元
       expect(form.derivedPrice.value).toBeCloseTo(1.041, 6);
     });
 
@@ -271,9 +261,7 @@ describe("useInvestmentForm", () => {
       expect(form.quantityText.value).toBe("987.6543");
       expect(form.fee.value).toBe(1.5);
       expect(form.priceText.value).toBe("");
-      // 基金形态无单价输入面，单价错误态不装配（#416）
       expect(form.priceError.value).toBeNull();
-      // 反算展示与存储净值同一公式：(100000 − 150) × 100 ÷ 987.6543 → 1.0110 元
       expect(form.derivedPrice.value).toBeCloseTo(1.011, 6);
     });
   });
@@ -290,15 +278,12 @@ describe("useInvestmentForm", () => {
       expect(form.instrumentId.value).toBe("ins-1");
       expect(form.quantityText.value).toBe("100");
       expect(form.priceText.value).toBe("150");
-      // 合法回填不显红态（#416）
       expect(form.quantityError.value).toBeNull();
       expect(form.priceError.value).toBeNull();
       expect(form.fee.value).toBe(5);
       expect(form.note.value).toBe("建仓买入");
       expect(form.date.value).toBe(new Date("2026-01-10T00:00:00Z").getTime());
       expect(form.currencyCode.value).toBe("CNY");
-      // 远程搜索未执行（无候选）时，回填标的仍可显示（编辑回填钉住接线，删除即红）；
-      // label 拼法断言归 useInstrumentOptions 单测，此处只断言选项面构成
       expect(form.instrumentOptions.value.map((o) => o.value)).toEqual(["ins-1"]);
     });
 
@@ -319,13 +304,9 @@ describe("useInvestmentForm", () => {
         },
       });
       form.searchInstruments("美光");
-      // 等搜索结果落位（防抖 + 远程取数；searching 在防抖前置位，不能作落位信号），
-      // 再断言回填标的仍在候选面头部
       await vi.waitFor(() => {
         expect(form.instrumentOptions.value.map((o) => o.value)).toContain("ins-2");
       });
-      // 回填标的钉在候选面头部、搜索结果不冲掉它（钉头是本消费方决策）；label 拼法与
-      // 合并机制的域断言归 useInstrumentOptions 单测，此处只断言选项面构成与位置
       expect(form.instrumentOptions.value.map((o) => o.value)).toEqual(["ins-1", "ins-2"]);
     });
 
@@ -346,8 +327,6 @@ describe("useInvestmentForm", () => {
 
       await form.submit();
 
-      // 提交路由：更新命令携带交易 id + 回填业务字段交接装配结果；
-      // 金额/日期转换与占位字段由装配器测试承担（issue #216）
       expect(mockInvoke).toHaveBeenCalledWith("update_transaction", {
         id: "txn-buy-1",
         input: expect.objectContaining({
@@ -359,7 +338,6 @@ describe("useInvestmentForm", () => {
       });
       expect(onUpdated).toHaveBeenCalledTimes(1);
       expect(onCreated).not.toHaveBeenCalled();
-      // 编辑路径不重置表单：成功即关窗（onUpdated），实例整体销毁
       expect(form.instrumentId.value).toBe("ins-1");
       expect(form.quantityText.value).toBe("100");
     });
@@ -389,13 +367,11 @@ describe("useInvestmentForm", () => {
   });
 });
 
-/** 目标 + 专属账户成对夹具 helper（issue #1755）：goal id 随账户 id 派生、绑定同源。 */
 function pair(id: string) {
   return makeGoalPair({ id, goal: { id: `goal-${id}` } });
 }
 
 describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/sell 对称）", () => {
-  /** 准入闭集与币种过滤的候选全集：现金类五型 + 排除型三型 + 异币种 */
   const fundingAccounts: Account[] = [
     {
       id: "acc-cash",
@@ -467,8 +443,6 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
       is_hidden: false,
       is_archived: false,
     },
-    // 在用目标账户（issue #1755 / ADR-0133 决策 4）：`other` 类型、身份由绑定派生，
-    // 出资候选按绑定过滤防呆——CNY 与 USD 各一，覆盖币种联动口径。
     makeGoalPair({ id: "acc-goal", account: { name: "买车基金账户" } }).account,
     makeGoalPair({
       id: "acc-goal-usd",
@@ -533,8 +507,6 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
     },
   ];
 
-  /** 出资账户候选场景的表单布线：候选全集上参考 store，编辑回填场景可注入 editing/trade；
-   * kind 参数供 sell 对称用例复用同套候选与编辑夹具（#938） */
   async function fundingForm(
     options?: Parameters<typeof useInvestmentForm>[1],
     kind: "buy" | "sell" = "buy",
@@ -547,17 +519,12 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
     });
     const store = useReferenceStore();
     await store.refresh();
-    // 目标绑定集显式 refresh 落位（issue #1755）：与 AccountsView /
-    // InvestmentForm 两处同款口径，不依赖 self-init 的隐式时序。
     await useSavingsGoalsStore()
       .refresh()
       .catch(() => {});
     return useInvestmentForm(kind, options);
   }
 
-  /** 出资候选双断言 helper（issue #1755）：调用事实（候选过滤消费目标绑定集 → 进度
-   *  命令必被拉取，ADR-0087 断言对准用户可观察结果）+ 候选集合——expectGoalFiltered=true
-   *  断在用目标账户不在候选；false 断无绑定不误伤（普通 other 账户仍在候选）。 */
   async function fundingCandidates(expectGoalFiltered: boolean, kind: "buy" | "sell" = "buy") {
     const form = await fundingForm(undefined, kind);
     expect(
@@ -592,7 +559,6 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
   it("币种随投资账户联动：选美元投资账户后候选只剩同币种现金类，同币种目标账户同样被滤（issue #1191 / #1755）", async () => {
     goalProgress = [pair("acc-goal-usd").progress];
     const form = await fundingForm();
-    // 未选账户：退「新表单预选币种」（展示币种偏好）
     expect(form.currencyCode.value).toBe("CNY");
     form.accountId.value = "acc-inv-usd";
     expect(form.currencyCode.value).toBe("USD");
@@ -664,8 +630,6 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
       (call[1] as { input: { funding_account_id: string | null } }).input.funding_account_id,
     ).toBeNull();
   });
-
-  // --- sell 对称（issue #938）：卖出表单与编辑回填复用买入同款模式 ---
 
   it("sell 候选过滤同款：在用目标账户不在候选、默认空（issue #1755 对称）", async () => {
     goalProgress = [pair("acc-goal").progress, pair("acc-goal-usd").progress];

@@ -115,3 +115,13 @@ spawnSync('bun') 接缝不变——变的是测试文件自身的执行器（vit
 零 npm 依赖性质不变”先例）；`vitest/globals` 续留——include 面内的部分导入
 测试（仅导入 describe/it 等、全局用 beforeEach/afterEach）与测试助手内联
 用例（packages/test-support/src 源码内的 expect）有真实消费者，非死面。
+
+## 修订注记（#2204 决策记录并入，2026-11-21）：守门挂载登记机制自脚本头注并入
+
+守门挂载登记（spec #1682）：质量门挂载声明的**单一事实源**住 `gate-mounts.ts` 登记表——「哪些门被质量门槛跑到、挂哪」的唯一查询点。此前该事实由 check.sh 手写行、CI workflow 手写步骤、各门头注释三本互不核对的登记簿维持，删任一行零测试变红。机制要点：
+
+- **判定语义 = per-host 行首前缀**：登记条目按宿主声明 `{file, prefix, where}`，宿主文件的非注释行 trim 后行首匹配该前缀。echo 展示行行首是 `echo "▶`，永不可能命中执行形态——echo 假绿免疫是判定语义的结构后果（#1112 第三轮审查实测教训）；同一门在两宿主的命令文本实差（`( cd src-tauri && …)` 包裹 vs `working-directory`、`-- --check` vs `--check`）由 per-host prefix 显式表达。
+- **核对，不生成**：check.sh 与 CI workflow 保持手写，守门接线测试（`gate-mounts.test.ts`）遍历登记断言双向全等——删任一宿主挂载行或删任一登记条目至少一条断言变红（ADR-0087 断言强度）；核对测试文件本身的删除靠评审（import 单向互证）。
+- **新增守门的登记动作**：在 `GATE_MOUNTS` 追加一条——唯一名称、issue / ADR 出处（导航字段）、按宿主的执行行形态；check.sh 执行行与 CI 步骤同步挂载，接线测试自动核对三侧全等。门的核心判定规则归各门自身，登记只管挂载。
+
+本条把脚本头注（过渡期读物，ADR-0145）中的机制政策收进 ADR，对应注释按四分类进入后续清理批次。

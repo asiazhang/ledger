@@ -20,17 +20,7 @@ import type {
   ScheduledTransactionWithExt,
 } from "@ledger/types";
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0];
-
-/**
- * 分期页签组件测试（ADR-0041 决策 10，迁移步 3）：清单加载/按形态过滤/状态过滤/
- * Plan Lifecycle 状态机（参数/提示/重拉时序/可用性矩阵）已由 ScheduledPlanList
- * 模块接口测试承接（useScheduledPlanList.test.ts，刷新版本号镜像法）；商户解析
- * 竞态矩阵已由计划表单接缝测试承接（useScheduledPlanForm.test.ts）。本文件收缩为
- * 渲染与交互冒烟 + 分期形态真差异——期数预览（含尾差文案）、进度列（expandDetail
- * 接线：期数/金额取自详情命令）与新建表单校验/提交编排。迁移与删除记录见对应提交信息。
- */
 
 const mockAccounts: Account[] = [
   {
@@ -76,10 +66,8 @@ const mockMerchants: Merchant[] = [
   },
 ];
 
-/** 可变商户字典：状态操作 / 即建后重载读得到最新值。 */
 let mockMerchantsState: Merchant[] = mockMerchants;
 
-/** 分期详情组装（目录特有派生包装，留守本地）。 */
 function makeDetail(
   plan: ScheduledTransactionWithExt,
   completed: { count: number; amount: number },
@@ -100,11 +88,9 @@ function makeDetail(
   };
 }
 
-// —— invoke mock：可变数据源，状态操作后重载读得到最新值 ——
 let mockPlans: ScheduledTransactionWithExt[] = [];
 const mockDetails = new Map<string, ScheduledTransactionDetail>();
 
-/** 弹窗内普通元素（非组件）经 document.body 查询：NModal teleport 到 body。 */
 function modalText(testid: string) {
   return document.body.querySelector(`[data-testid="${testid}"]`)?.textContent ?? "";
 }
@@ -117,10 +103,6 @@ beforeEach(async () => {
   mockPlans = [];
   mockDetails.clear();
   mockMerchantsState = mockMerchants;
-  // 唯一接缝布线（ADR-0085）：账户与分类以本套夹具覆写（值与规范夹具不同，
-  // 属场景契约而非重复枚举），进 defaults 表；可变商户库与创建/详情/状态
-  // 编排为函数型 overrides。其余参考命令由规范夹具兜底；store 层预热
-  // opt-in 开启：主题用例依赖参考数据就绪后的即时渲染（商户列、下拉选项）。
   const seam = wireInvokeSeam({
     defaults: {
       list_accounts: mockAccounts,
@@ -216,8 +198,6 @@ describe("InstallmentsPane 清单渲染冒烟（编排用例见 useScheduledPlan
   });
 
   it("已完成金额来自详情命令的 completed_amount_cents，不由前端推算", async () => {
-    // 1200 分 12 期每期应为 100，但已完成汇总给 150（模拟失败重试等真实历史）：
-    // 显示以汇总为准，不用 total/occurrences 推算
     const inst = makeInstallmentPlan({ id: "i1", note: "手机分期" }, 1200, 12);
     mockPlans = [inst];
     mockDetails.set("i1", makeDetail(inst, { count: 1, amount: 150 }));
@@ -253,13 +233,11 @@ describe("InstallmentsPane 清单渲染冒烟（编排用例见 useScheduledPlan
     mockDetails.set("d1", makeDetail(done, { count: 12, amount: 1200 }));
     mockDetails.set("a1", makeDetail(active, { count: 0, amount: 0 }));
     const wrapper = await mountView();
-    // 默认「进行中」：已完成分期不出现
     expect(wrapper.text()).not.toContain("已还清分期");
     await wrapper.find('[data-testid="filter-completed"]').trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("已还清分期");
     expect(wrapper.text()).not.toContain("进行中分期");
-    // 已完成分期仅提供期次查看（可用性矩阵归模块，此处验渲染接线）
     expect(wrapper.find('[data-testid="op-detail-d1"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="op-pause-d1"]').exists()).toBe(false);
   });
@@ -307,7 +285,6 @@ describe("InstallmentsPane 操作列渲染与确认交互（可用性矩阵与�
     const wrapper = await mountView();
     await wrapper.findComponent(NPopconfirm).find('[data-testid="op-cancel-a1"]').trigger("click");
     await flushPromises();
-    // 确认文案说明历史保留（ADR-0024：取消不删已生成交易）
     expect(document.body.querySelector(".n-popconfirm")?.textContent).toContain("保留");
     const positive = document.body.querySelector(".n-popconfirm .n-button--primary-type");
     expect(positive).not.toBeNull();
@@ -341,7 +318,6 @@ describe("InstallmentsPane 操作列渲染与确认交互（可用性矩阵与�
 });
 
 describe("InstallmentsPane 新建分期（分期形态真差异，issue #204）", () => {
-  /** 点击「新建分期」打开模态对话框。 */
   async function openCreateModal(wrapper: ReturnType<typeof mount>) {
     await wrapper.find('[data-testid="inst-create-open"]').trigger("click");
     await flushPromises();
@@ -366,14 +342,12 @@ describe("InstallmentsPane 新建分期（分期形态真差异，issue #204）"
   it("填总额与期数实时预览每期金额与末期（含尾差）", async () => {
     const wrapper = await mountView();
     await openCreateModal(wrapper);
-    // 未填时无预览
     expect(modalText("inst-preview")).toBe("");
     await findInput(wrapper, "inst-total").setValue("1");
     await findInput(wrapper, "inst-total").trigger("input");
     componentVm(wrapper.findComponent('[data-testid="inst-periods"]')).$emit("update:value", 3);
     await flushPromises();
     const preview = modalText("inst-preview");
-    // 1 元分 3 期：每期 floor 33 分，末期 34 分（尾差归末期）
     expect(preview).toContain(formatAmount(33, cny));
     expect(preview).toContain(formatAmount(34, cny));
     expect(preview).toContain("尾差");
@@ -391,16 +365,11 @@ describe("InstallmentsPane 新建分期（分期形态真差异，issue #204）"
     expect(preview).not.toContain("尾差");
   });
 
-  // 提交流程编排（商户解析 → payload 合并 → 创建 → 提示 → 重置 → 回调）已迁移至接缝接口测试
-  // （useScheduledPlanForm.test.ts「submitCreate 提交时序编排」分期形态用例）。此处保留：
-  // 交互冒烟（关窗 + 清单刷新接线）、校验（留页签）与每期 floor 口径/特化字段直传接线。
-
   it("创建成功后关闭弹窗并刷新清单，新分期出现在列表（页签直传 floor 口径与特化字段）", async () => {
     const wrapper = await mountView();
     await openCreateModal(wrapper);
     await findInput(wrapper, "inst-note").setValue("手机分期");
     await findInput(wrapper, "inst-note").trigger("input");
-    // 总额 1000 元 = 100000 分，分 12 期：floor(100000/12)=8333（floor 口径页签持有）
     await findInput(wrapper, "inst-total").setValue("1000");
     await findInput(wrapper, "inst-total").trigger("input");
     componentVm(wrapper.findComponent('[data-testid="inst-periods"]')).$emit("update:value", 12);
@@ -413,7 +382,6 @@ describe("InstallmentsPane 新建分期（分期形态真差异，issue #204）"
     await flushPromises();
     expect(wrapper.findComponent(NModal).props("show")).toBe(false);
     expect(wrapper.text()).toContain("手机分期");
-    // 元转分 + floor 口径 + 特化字段直传（公共字段与商户解析断言留给接缝直测）
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === "create_scheduled_transaction");
     expect(call).toBeDefined();
     expect(call![1]).toMatchObject({
@@ -435,7 +403,6 @@ describe("InstallmentsPane 新建分期（分期形态真差异，issue #204）"
       "acc-1",
     );
     await flushPromises();
-    // 只填期数不填总额
     componentVm(wrapper.findComponent('[data-testid="inst-periods"]')).$emit("update:value", 12);
     await flushPromises();
     await wrapper.findComponent('[data-testid="inst-create"]').trigger("click");
@@ -484,13 +451,11 @@ describe("InstallmentsPane 新建分期（分期形态真差异，issue #204）"
 });
 
 describe("InstallmentsPane 商户挂靠（issue #206：表单接缝接线冒烟，解析矩阵见 useScheduledPlanForm.test.ts）", () => {
-  /** 点击「新建分期」打开模态对话框。 */
   async function openCreateModal(wrapper: ReturnType<typeof mount>) {
     await wrapper.find('[data-testid="inst-create-open"]').trigger("click");
     await flushPromises();
   }
 
-  /** 填写除商户外的必填项（总额 1200 元分 12 期 + 扣款账户）。 */
   async function fillRequired(wrapper: ReturnType<typeof mount>) {
     await findInput(wrapper, "inst-total").setValue("1200");
     await findInput(wrapper, "inst-total").trigger("input");
@@ -505,7 +470,6 @@ describe("InstallmentsPane 商户挂靠（issue #206：表单接缝接线冒烟�
   it("商户下拉补全在用商户：选中后创建携带 merchant_id", async () => {
     const wrapper = await mountView();
     await openCreateModal(wrapper);
-    // 商户下拉 = 新建弹窗内 data-testid 为 inst-merchant 的 PinyinSelect（内部 NSelect 承载 options）
     const merchantSelect = wrapper
       .findComponent('[data-testid="inst-merchant"]')
       .findComponent(NSelect);
@@ -518,14 +482,12 @@ describe("InstallmentsPane 商户挂靠（issue #206：表单接缝接线冒烟�
     await flushPromises();
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === "create_scheduled_transaction");
     expect(call![1]).toMatchObject({ input: { merchant_id: "mer-1" } });
-    // 清单商户列显示商户名
     expect(wrapper.text()).toContain("京东白条");
   });
 
   it("输入不存在的商户名保存即建：解析全仓单点走表单接缝，此处仅验接线（选中/即建矩阵见 useScheduledPlanForm.test.ts）", async () => {
     const wrapper = await mountView();
     await openCreateModal(wrapper);
-    // 输入文本「新商户」：未命中在用商户 → 保存时接缝即建
     componentVm(wrapper.findComponent('[data-testid="inst-merchant"]')).$emit(
       "update:value",
       "新商户",
@@ -533,7 +495,6 @@ describe("InstallmentsPane 商户挂靠（issue #206：表单接缝接线冒烟�
     await fillRequired(wrapper);
     await wrapper.findComponent('[data-testid="inst-create"]').trigger("click");
     await flushPromises();
-    // 提交携带解析后的商户 id（即建/重名兜底矩阵在接缝测试）
     const createCall = mockInvoke.mock.calls.find(
       ([cmd]) => cmd === "create_scheduled_transaction",
     );
@@ -571,7 +532,6 @@ describe("InstallmentsPane 商户挂靠（issue #206：表单接缝接线冒烟�
 });
 
 describe("InstallmentsPane 移动档（issue #848 / ADR-0088 决策 11 票⑧）", () => {
-  /** 分期夹具：120000 分 12 期，已还 3 期 30000 分。 */
   function wirePlan() {
     const inst = makeInstallmentPlan({ id: "i1", note: "手机分期" }, 120000, 12, "mer-1");
     mockPlans = [inst];
@@ -609,7 +569,6 @@ describe("InstallmentsPane 移动档（issue #848 / ADR-0088 决策 11 票⑧）
     expect(text).toContain("数码分期");
     expect(text).toContain("招商银行");
     expect(text).toContain(formatAmount(120000, cny));
-    // 进度锚点与桌面同 testid：进度条 + 已还文案照常
     const cell = wrapper.find('[data-testid="inst-progress-i1"]');
     expect(cell.exists()).toBe(true);
     expect(cell.text()).toContain(formatAmount(30000, cny));

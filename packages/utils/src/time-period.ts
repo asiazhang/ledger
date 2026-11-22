@@ -1,32 +1,10 @@
-/**
- * 时间范围快捷选择——时间周期纯函数模块（issue #381/#382/#383）。
- *
- * 承载交易页时间维度行的预设闭集、预设 ⇄ 含边界日期区间换算、高亮派生匹配，
- * 以及期间步进器（#383）的区间 ⇄（单位，期间）双向换算、期间 ±1 步进与
- * 期间标签本地化格式化。周期边界按本地时区日历取自然月 / 自然季度
- * （1–3、4–6、7–9、10–12）/ 自然年，输出 YYYY-MM-DD 含边界区间
- * （与后端列表查询的 date 字典序比较一致，后端零改动）。
- *
- * 快照语义（#381 设计）：预设与步进只负责换算出精确的自然周期边界，写入过滤
- * 模块后即为快照——跨月/季/年后区间不漂移，仅高亮（matchPreset）随「今天」
- * 推移自然熄灭。期间游标不落状态：步进前从当前区间唯一反推（rangeToPeriod），
- * 步进后写回快照；自然月/季/年跨度互不相同保证反推唯一。
- *
- * 本模块不持任何业务状态，`today` 一律由调用方注入；周期数学为纯函数。
- * 唯一例外是标签文案：经 i18n 单例按当前界面语言现取（ADR-0049 模块级 t()
- * 模式，响应式上下文中调用随语言切换即时重渲染），非入参可注入。
- */
 import { formatLocalDateISO } from "./date";
 import { t } from "@ledger/i18n";
 
-/** 带日期区间的预设闭集（「全部」无区间，单独作默认态哨兵）。 */
 export type DatedTimePeriodPreset = "month" | "quarter" | "year" | "lastYear";
 
-/** 时间维度预设闭集（芯片渲染顺序即数组顺序）：
- * 全部（无日期过滤 = 默认态）| 当月 | 当季 | 当年 | 去年。 */
 export type TimePeriodPreset = "all" | DatedTimePeriodPreset;
 
-/** 带日期区间的预设全序（matchPreset 的匹配域）。 */
 export const DATED_TIME_PERIOD_PRESETS: readonly DatedTimePeriodPreset[] = [
   "month",
   "quarter",
@@ -34,53 +12,40 @@ export const DATED_TIME_PERIOD_PRESETS: readonly DatedTimePeriodPreset[] = [
   "lastYear",
 ];
 
-/** 预设全序（视图按此渲染芯片）。 */
 export const TIME_PERIOD_PRESETS: readonly TimePeriodPreset[] = [
   "all",
   ...DATED_TIME_PERIOD_PRESETS,
 ];
 
-/** 含边界日期区间（YYYY-MM-DD，双端包含）。 */
 export interface DateRange {
   from: string;
   to: string;
 }
 
-/** 可空双端日期区间（共享受控组件的受控契约形状，issue #410）：
- * 双端皆 null = 无日期过滤「全部」默认态；单端 null 是 URL 下钻可达的过渡态
- *（无芯片点亮、无可步进游标）。 */
 export interface NullableDateRange {
   from: string | null;
   to: string | null;
 }
 
-/** YYYY-MM-DD 格式化复用本地日历日语义单点。 */
 const iso = formatLocalDateISO;
 
-/** 本地「第 m0 月（0 起）」的月末日后：经「次月 0 日」滚动得出（自动处理闰年）。 */
 function lastDayOf(y: number, m0: number): number {
   return new Date(y, m0 + 1, 0).getDate();
 }
 
-/** 本地自然月区间：m0 为 0 起月份。 */
 function monthRange(y: number, m0: number): DateRange {
   return { from: iso(y, m0, 1), to: iso(y, m0, lastDayOf(y, m0)) };
 }
 
-/** 本地自然季度区间：q 为 0 起季度（1–3、4–6、7–9、10–12）。 */
 function quarterRange(y: number, q: number): DateRange {
   const startMonth = q * 3;
   return { from: iso(y, startMonth, 1), to: iso(y, startMonth + 2, lastDayOf(y, startMonth + 2)) };
 }
 
-/** 本地自然年区间（issue #380 导出）：自然年边界派生的单点，报表跳转载荷的
- * 「所选年份首尾日期」同源复用，不在视图手搓第二份年界数学。 */
 export function yearRange(y: number): DateRange {
   return { from: iso(y, 0, 1), to: iso(y, 11, 31) };
 }
 
-/** 预设 → 相对 today 的含边界日期区间（本地自然周期；「去年」= 当前年减一的完整自然年）。
- * 时间戳与 Date 双输入。 */
 export function presetRange(preset: DatedTimePeriodPreset, today: number | Date): DateRange {
   const d = typeof today === "number" ? new Date(today) : today;
   const y = d.getFullYear();
@@ -96,43 +61,28 @@ export function presetRange(preset: DatedTimePeriodPreset, today: number | Date)
   }
 }
 
-// ---------------------------------------------------------------------------
-// 期间步进器：区间 ⇄（单位，期间）双向换算、步进、标签格式化（issue #383）
-// ---------------------------------------------------------------------------
-
-/** 期间单位闭集（与带日期区间的预设单位一一对应）。 */
 export type PeriodUnit = "month" | "quarter" | "year";
 
-/** 自然周期（期间步进的游标中间态，不落过滤模块状态）：
- * month → index 为 0 起月份；quarter → index 为 0 起季度；year → index 恒 0。 */
 export interface NaturalPeriod {
   unit: PeriodUnit;
   year: number;
   index: number;
 }
 
-/** 数据期间边界（issue #390 / #388）：某粒度下的闭区间 [最早期间, 最晚期间]。 */
 export interface PeriodBoundary {
   earliest: NaturalPeriod;
   latest: NaturalPeriod;
 }
 
-/** 期间在时间轴上的单调整数序（用于跨年/年内大小比较与边界判定）。 */
 function periodValue(p: NaturalPeriod): number {
   const perYear = p.unit === "month" ? 12 : p.unit === "quarter" ? 4 : 1;
   return p.year * perYear + p.index;
 }
 
-/** 期间大小比较：返回负数表示 a 早于 b，0 表示相同期间，正数表示 a 晚于 b。
- * 前提：a 与 b 为相同单位。 */
 export function comparePeriods(a: NaturalPeriod, b: NaturalPeriod): number {
   return periodValue(a) - periodValue(b);
 }
 
-/** 数据期间边界派生单点（issue #390 / #388）：
- * 输入日期对（min_date / max_date，可空）与「今天」，
- * 输出指定单位下的闭区间 [最早交易期间, max(当前期间, 最新交易期间)]。
- * 空库或非法日期回退为单「当前期间」；「与今天更晚者」的抬升在此发生。 */
 export function derivePeriodBoundary(
   unit: PeriodUnit,
   dateRange: { min_date: string | null; max_date: string | null } | null | undefined,
@@ -158,8 +108,6 @@ export function derivePeriodBoundary(
   const minIndex =
     unit === "month" ? minParsed.m0 : unit === "quarter" ? Math.floor(minParsed.m0 / 3) : 0;
   const earliestFromData: NaturalPeriod = { unit, year: minParsed.y, index: minIndex };
-  // 当前期间必须始终可选；当所有交易都在未来时，从当前期间而不是未来的
-  // 最早交易期间开始，保持边界为连续且包含当前期间的闭区间。
   const earliest =
     periodValue(earliestFromData) < periodValue(current) ? earliestFromData : current;
 
@@ -172,7 +120,6 @@ export function derivePeriodBoundary(
   return { earliest, latest };
 }
 
-/** 一并派生月/季/年三档数据期间边界（issue #390）。 */
 export function deriveAllPeriodBoundaries(
   dateRange: { min_date: string | null; max_date: string | null } | null | undefined,
   today: number | Date,
@@ -184,7 +131,6 @@ export function deriveAllPeriodBoundaries(
   };
 }
 
-/** 判定期间是否落在数据期间边界内（双端包含；异单位防御）。 */
 export function isPeriodWithinBoundary(p: NaturalPeriod, boundary: PeriodBoundary): boolean {
   if (p.unit !== boundary.earliest.unit || p.unit !== boundary.latest.unit) {
     return false;
@@ -193,7 +139,6 @@ export function isPeriodWithinBoundary(p: NaturalPeriod, boundary: PeriodBoundar
   return val >= periodValue(boundary.earliest) && val <= periodValue(boundary.latest);
 }
 
-/** 将期间钳制在数据期间边界内：低于下界取 earliest，高于上界取 latest，界内原样返回。 */
 export function clampPeriod(p: NaturalPeriod, boundary: PeriodBoundary): NaturalPeriod {
   if (periodValue(p) < periodValue(boundary.earliest)) {
     return boundary.earliest;
@@ -204,8 +149,6 @@ export function clampPeriod(p: NaturalPeriod, boundary: PeriodBoundary): Natural
   return p;
 }
 
-/** 钳制步进辅助（issue #390 / #391）：判定期间 ±delta 步进后是否仍在数据边界内。
- * 边界在途/失败时（boundary 为 null / undefined）退化为不钳制（恒返回 true，不阻塞步进）。 */
 export function canStepPeriod(
   p: NaturalPeriod,
   delta: number,
@@ -216,7 +159,6 @@ export function canStepPeriod(
   return isPeriodWithinBoundary(next, boundary);
 }
 
-/** YYYY-MM-DD 解析：非法格式、越界月份与不存在日期（如 2 月 30 日）返回 null。 */
 function parseISODate(s: string): { y: number; m0: number; day: number } | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
   if (!m) return null;
@@ -228,19 +170,14 @@ function parseISODate(s: string): { y: number; m0: number; day: number } | null 
   return { y, m0, day };
 }
 
-/** 含边界日期区间 → 唯一（单位，期间）：区间恰为某自然月/季/年时返回对应期间。
- * 双端任一为空（「全部」= 默认态）、单端过滤、任意区间与非法日期一律 null
- * （无可步进游标）。自然月/季/年跨度互不相同，反推唯一（单测全枚举覆盖）。 */
 export function rangeToPeriod(from: string | null, to: string | null): NaturalPeriod | null {
   if (from === null || to === null) return null;
   const f = parseISODate(from);
   const end = parseISODate(to);
   if (!f || !end) return null;
-  // 年：1 月 1 日 → 同年 12 月 31 日
   if (f.m0 === 0 && f.day === 1 && end.y === f.y && end.m0 === 11 && end.day === 31) {
     return { unit: "year", year: f.y, index: 0 };
   }
-  // 季：同年同季度，且起于季度首月 1 日、止于季度末月最后一日（跨季度区间不命中）
   const fq = Math.floor(f.m0 / 3);
   if (
     end.y === f.y &&
@@ -251,14 +188,12 @@ export function rangeToPeriod(from: string | null, to: string | null): NaturalPe
   ) {
     return { unit: "quarter", year: f.y, index: fq };
   }
-  // 月：同年同月，起于 1 日、止于月末（自动兼容闰年 2 月）
   if (f.y === end.y && f.m0 === end.m0 && f.day === 1 && end.day === lastDayOf(end.y, end.m0)) {
     return { unit: "month", year: f.y, index: f.m0 };
   }
   return null;
 }
 
-/** 时间戳按本地日历反推自然期间（期间面板与步进器共用）。 */
 export function periodFromTimestamp(unit: PeriodUnit, timestamp: number): NaturalPeriod {
   const d = new Date(timestamp);
   return {
@@ -268,13 +203,11 @@ export function periodFromTimestamp(unit: PeriodUnit, timestamp: number): Natura
   };
 }
 
-/** 自然期间起点的本地时间戳（供期间面板的受控值使用）。 */
 export function periodStartTimestamp(p: NaturalPeriod): number {
   const month = p.unit === "month" ? p.index : p.unit === "quarter" ? p.index * 3 : 0;
   return new Date(p.year, month, 1, 12).getTime();
 }
 
-/** 期间 → 含边界日期区间（与 presetRange 共用同一自然周期换算单点，写回快照用）。 */
 export function periodRange(p: NaturalPeriod): DateRange {
   switch (p.unit) {
     case "month":
@@ -286,9 +219,6 @@ export function periodRange(p: NaturalPeriod): DateRange {
   }
 }
 
-/** 期间 ±delta 步进（视图只用 ±1）：月/季在年界自然回绕（12 月 → 次年 1 月、
- * 四季度 → 次年一季度），年直接 ±1；本函数不做边界判定，钳制由 canStepPeriod
- * 在调用方承担（issue #391 修订 #383「不钳制未来」）。 */
 export function stepPeriod(p: NaturalPeriod, delta: number): NaturalPeriod {
   if (p.unit === "year") {
     return { unit: "year", year: p.year + delta, index: 0 };
@@ -299,10 +229,6 @@ export function stepPeriod(p: NaturalPeriod, delta: number): NaturalPeriod {
   return { unit: p.unit, year, index: total - year * perYear };
 }
 
-/** 期间标签本地化格式化：zh-CN「2026年2月」「2026年一季度」「2025年」；
- * en-US「Feb 2026」「Q1 2026」「2025」。模板与月/季名称表随共享受控组件文案文件
- * quickTimeRange（ADR-0049，无硬编码文案），经 t() 按当前界面语言现取
- * （响应式上下文中调用随语言切换即时重渲染）。 */
 export function formatPeriodLabel(p: NaturalPeriod): string {
   const year = String(p.year);
   if (p.unit === "year") {
@@ -314,9 +240,6 @@ export function formatPeriodLabel(p: NaturalPeriod): string {
   return t(`quickTimeRange.periodLabel.${key}`, { year, name });
 }
 
-/** 高亮派生：当前日期区间恰等于某预设定义（相对 today 的自然周期）时返回该预设；
- * 双端皆空 = 默认态「全部」；单端过滤、任意区间与历史周期区间返回 null（无芯片点亮，
- * 列表快照不漂移）。 */
 export function matchPreset(
   from: string | null,
   to: string | null,

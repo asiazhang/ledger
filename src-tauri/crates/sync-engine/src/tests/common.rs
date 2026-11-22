@@ -1,8 +1,3 @@
-//! 多端同步域测试薄皮（仅限本测试目录使用）：双端建库、交易语义输入构造器、
-//! 业务字段行读取与内存假 Transport（#859 真通道前的合成通道）。通用夹具
-//! （建库两行序、账户种子）消费统一测试工厂 `tauri_app_lib::test_support`（ADR-0084）；
-//! 本文件只留本域特有的输入构造与判据读取。
-
 use rusqlite::Connection;
 
 use crate::{DirectConn, ingest_ops, read_ops};
@@ -10,14 +5,10 @@ use ledger_transaction::TransactionInput;
 use ledger_transaction::amount::{FxRateSource, TransactionKind};
 use tauri_app_lib::test_support::FIXED_NOW;
 
-/// 直通连接源速记（轮次测试：调用方已持连接的形态，#1339 分段取锁接缝的
-/// 测试侧替身——连接源由调用方持有时，段内直通、无锁口径）。
 pub(crate) fn direct(conn: &Connection) -> DirectConn<'_> {
     DirectConn::new(conn)
 }
 
-/// 内存假 Transport 的线路形态：读端全部 op 的 wire 序列（JSON 字符串，#859
-/// 真通道接线前的合成通道；schema 偏斜场景由此可合成）。
 pub(crate) fn wire_out(conn: &Connection) -> Vec<String> {
     read_ops(conn)
         .unwrap()
@@ -26,12 +17,10 @@ pub(crate) fn wire_out(conn: &Connection) -> Vec<String> {
         .collect()
 }
 
-/// 内存假 Transport 投递：对端逐条接入（解析失败按 schema 偏斜挂起，不中断）。
 pub(crate) fn wire_in(conn: &Connection, wire: &[String]) -> Vec<crate::ApplyReport> {
     ingest_ops(conn, wire).unwrap()
 }
 
-/// 支出输入构造器（闭环测试的「A 端写」侧语义输入）。
 pub(crate) fn make_expense(account_id: &str, amount_cents: i64, note: &str) -> TransactionInput {
     TransactionInput {
         funding: Vec::new(),
@@ -64,19 +53,12 @@ pub(crate) fn make_expense(account_id: &str, amount_cents: i64, note: &str) -> T
     }
 }
 
-/// 一笔交易的业务字段快照（判据读取）：账本状态一致 = 业务字段相等。
-///
-/// 审计列（created_at / updated_at / device_id / version）是各端本地事实，
-/// 不参与状态等值判定（ADR-0091：op 只携带 DeviceId / 逻辑时钟 / schema 版本，
-/// 不携带墙钟；LWW 裁决依据是 op 全序，#856 承接）。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TxnRow {
     pub kind: TransactionKind,
     pub amount_cents: i64,
     pub currency_code: String,
     pub amount_native_cents: i64,
-    /// 折算来源留痕（#1548，V029）：源端折算事实随 op 搬运，属业务字段、
-    /// 参与两端状态等值判定。
     pub fx_rate_used: Option<f64>,
     pub fx_rate_source: Option<FxRateSource>,
     pub account_id: String,
@@ -90,7 +72,6 @@ pub(crate) struct TxnRow {
     pub is_deleted: i64,
 }
 
-/// 按 id 读取交易业务字段（不存在返回 None）。
 pub(crate) fn read_transaction(conn: &Connection, id: &str) -> Option<TxnRow> {
     conn.query_row(
         "SELECT kind, amount_cents, currency_code, amount_native_cents, account_id, \
@@ -120,12 +101,6 @@ pub(crate) fn read_transaction(conn: &Connection, id: &str) -> Option<TxnRow> {
     .ok()
 }
 
-// ---------------------------------------------------------------------------
-// 投资类业务快照读取（同步重放收敛的判据）：自然键 = 锚定交易 id（批次/匹配行
-// id 是各端本地事实，不参与状态等值判定；先例：交易行审计列同一取舍）。
-// ---------------------------------------------------------------------------
-
-/// 持仓批次业务快照（自然键 = 锚定交易 id）：(初始数量, 剩余数量, 每份成本, 币种)。
 pub(crate) fn read_lot(conn: &Connection, anchor_tx_id: &str) -> Option<(f64, f64, i64, String)> {
     conn.query_row(
         "SELECT initial_quantity, remaining_quantity, cost_per_unit_cents, currency_code \
@@ -136,7 +111,6 @@ pub(crate) fn read_lot(conn: &Connection, anchor_tx_id: &str) -> Option<(f64, f6
     .ok()
 }
 
-/// 卖出匹配业务快照（自然键 = 卖出交易 × 锚定交易）：(数量, 每份成本, 已实现盈亏)。
 pub(crate) fn read_lot_sale(
     conn: &Connection,
     sell_tx_id: &str,
@@ -152,13 +126,6 @@ pub(crate) fn read_lot_sale(
     .ok()
 }
 
-// ---------------------------------------------------------------------------
-// 定时计划合成夹具（issue #856 防双扣场景）：计划与期次行按同一计划 id 在两端
-// 等量种子（真实世界对应 #860 计划同步后的两端状态）；期次行 id 刻意允许两端
-// 不同——期次身份是 (plan_id, 计划日期)，不是本地行 id。
-// ---------------------------------------------------------------------------
-
-/// 种入一个 active 订阅计划（期次触发场景的最小计划行，含订阅扩展行）。
 pub(crate) fn seed_plan(conn: &Connection, plan_id: &str, account_id: &str, amount_cents: i64) {
     conn.execute(
         "INSERT INTO scheduled_transactions \
@@ -177,7 +144,6 @@ pub(crate) fn seed_plan(conn: &Connection, plan_id: &str, account_id: &str, amou
     .unwrap();
 }
 
-/// 种入一个 pending 期次（期次行 id 本地自定，期次身份由 plan + 日期承载）。
 pub(crate) fn seed_occurrence(
     conn: &Connection,
     occ_id: &str,
@@ -195,7 +161,6 @@ pub(crate) fn seed_occurrence(
     .unwrap();
 }
 
-/// 种入本机设备标识（固定 id：需要确定 DeviceId 序的全序/LWW 场景）。
 pub(crate) fn seed_device(conn: &Connection, device_id: &str) {
     conn.execute(
         "INSERT INTO sync_device (id, logical_clock, created_at, updated_at) VALUES (?1, 0, ?2, ?2)",
@@ -204,7 +169,6 @@ pub(crate) fn seed_device(conn: &Connection, device_id: &str) {
     .unwrap();
 }
 
-/// 期次行状态快照（判据读取）：(status, transaction_id)。
 pub(crate) fn read_occurrence(conn: &Connection, occ_id: &str) -> Option<(String, Option<String>)> {
     conn.query_row(
         "SELECT status, transaction_id FROM scheduled_transaction_occurrences WHERE id = ?1",
@@ -214,18 +178,11 @@ pub(crate) fn read_occurrence(conn: &Connection, occ_id: &str) -> Option<(String
     .ok()
 }
 
-// ---------------------------------------------------------------------------
-// #859 通道测试替身：内存假 Transport（本地通道桩已上收统一测试工厂
-// tauri_app_lib::test_support::s3，issue #862 / #1221，域单测与集成测试同体消费）
-// ---------------------------------------------------------------------------
-
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use crate::transport::Transport;
 
-/// 内存假 Transport：进程内 `BTreeMap` 字节通道（通道布局/manifest/轮次逻辑
-/// 的快速测试替身；HTTP 语义归 S3 桩用例）。
 #[derive(Default)]
 pub(crate) struct MemoryTransport {
     files: Mutex<BTreeMap<String, Vec<u8>>>,
@@ -236,7 +193,6 @@ impl MemoryTransport {
         Self::default()
     }
 
-    /// 删除文件（测试通道故障注入：段缺失等场景）。
     pub(crate) fn files_remove(&self, path: &str) {
         self.files.lock().unwrap().remove(path);
     }

@@ -1,14 +1,3 @@
-//! 份额调整（split）的语义命令重放（issue #1053 / ADR-0106 决策 9）：载荷只携 Δ
-//! 与源端**最终持仓 / 批次总成本**两个比对锚点，重放端以本地 FIFO 批次快照独立
-//! 重建重述并比对；create / update / delete 三 op 重放后两端批次、审计、持仓与成本
-//! 完全一致（确定性重放），重复投递幂等；依赖倒挂（买入 op 未达）以零持仓守卫挂起、
-//! 补齐后重投递自然重试；快照发散（载荷篡改）以 `transaction.split-restatement-mismatch`
-//! 码化挂起、不静默错账；旧端产出的 split op（有行无字段）经 kind 防御臂挂起。
-//!
-//! 断言权威 = 同步引擎公开接口（`read_ops` / `ingest_ops` / `parked_ops`）与行为层
-//! 公开入口；批次/审计的判据读取以**锚定交易 id** 为自然键（批次行 id 是各端本地事实，
-//! 不参与状态等值判定——与既有投资重放测试同一取舍）。
-
 use rusqlite::Connection;
 
 use super::super::{OpOutcome, parked_ops, read_ops};
@@ -21,8 +10,6 @@ use tauri_app_lib::test_support::{
     self, assert_balance_cache_matches_realtime, seed_account, seed_instrument,
 };
 
-/// 双端铺垫：投资账户 + 标的（币种同账户）；种子直插的账户无写路径钩子，夹具经既有
-/// 接缝全量回填一次，缓存行才可比对。
 fn seed_both_ends() -> (Connection, Connection) {
     let conn_a = test_support::open();
     let conn_b = test_support::open();
@@ -96,7 +83,6 @@ fn split_input(account_id: &str, instrument_id: &str, delta: f64) -> Transaction
     }
 }
 
-/// 某标的的在用批次快照（按 rowid 序）：(锚定交易 id, 初始数量, 剩余数量, 每份成本)。
 fn lots_of(conn: &Connection, instrument_id: &str) -> Vec<(String, f64, f64, i64)> {
     let mut stmt = conn
         .prepare(
@@ -112,7 +98,6 @@ fn lots_of(conn: &Connection, instrument_id: &str) -> Vec<(String, f64, f64, i64
     .unwrap()
 }
 
-/// 该 split 的逐批次重述审计（按批次 rowid 序）：(重述前剩余, 重述后剩余, 重述后每份成本)。
 fn adjustments_of(conn: &Connection, split_id: &str) -> Vec<(f64, f64, i64)> {
     let mut stmt = conn
         .prepare(
@@ -129,7 +114,6 @@ fn adjustments_of(conn: &Connection, split_id: &str) -> Vec<(f64, f64, i64)> {
     .unwrap()
 }
 
-/// split 扩展行快照：(带符号 Δ, 行单价)。无扩展行返回 None。
 fn split_extension(conn: &Connection, split_id: &str) -> Option<(f64, Option<i64>)> {
     let sql = "SELECT quantity, price_cents FROM security_transactions \
                WHERE transaction_id=?1 AND action='split'";
@@ -137,7 +121,6 @@ fn split_extension(conn: &Connection, split_id: &str) -> Option<(f64, Option<i64
         .ok()
 }
 
-/// 全量重投递全部 op：逐条幂等跳过（无第二次效果）。
 fn assert_full_redelivery_is_idempotent(conn_a: &Connection, conn_b: &Connection) {
     let reports = wire_in(conn_b, &wire_out(conn_a));
     assert!(
@@ -147,8 +130,6 @@ fn assert_full_redelivery_is_idempotent(conn_a: &Connection, conn_b: &Connection
     assert_eq!(read_ops(conn_a).unwrap(), read_ops(conn_b).unwrap());
 }
 
-/// A 端铺垫两批次 + 部分卖出：100 份 @1.00 元、200 份 @2.00 元、卖 40 份 @1.00 元。
-/// 返回 (买1 id, 买2 id, 卖 id)。
 fn seed_two_lots_with_partial_sell(conn: &Connection) -> (String, String, String) {
     let buy1 = protocol::create(conn, buy_input("acc-sp", "inst-sp", 100.0, 10_000))
         .unwrap()
@@ -162,7 +143,6 @@ fn seed_two_lots_with_partial_sell(conn: &Connection) -> (String, String, String
     (buy1, buy2, sell)
 }
 
-/// 闭环判据（两端同态）：批次、重述审计、split 扩展行、余额缓存逐项比对。
 fn assert_split_converged(conn_a: &Connection, conn_b: &Connection, split_id: &str) {
     assert_eq!(
         lots_of(conn_b, "inst-sp"),
@@ -190,12 +170,10 @@ fn assert_split_converged(conn_a: &Connection, conn_b: &Connection, split_id: &s
 fn split_create_replay_converges_lots_and_restatement() {
     let (conn_a, conn_b) = seed_both_ends();
     let (buy1, buy2, _sell) = seed_two_lots_with_partial_sell(&conn_a);
-    // 重述前权威总成本：批次 1 锚点 10000 − 记录消耗 4000 = 6000；批次 2 = 40000。
     let split_id = protocol::create(&conn_a, split_input("acc-sp", "inst-sp", 30.0))
         .unwrap()
         .id;
 
-    // 载荷只携 Δ 与两个比对锚点（ADR-0106 决策 9）：无逐批次重述结果。
     let wire = wire_out(&conn_a);
     let split_op: serde_json::Value = serde_json::from_str(wire.last().unwrap()).unwrap();
     let fields = &split_op["command"]["payload"]["split"];
@@ -215,9 +193,6 @@ fn split_create_replay_converges_lots_and_restatement() {
     wire_in(&conn_b, &wire);
     assert_split_converged(&conn_a, &conn_b, &split_id);
 
-    // 尾差归末批次（确定性重放的批次序依据）：持仓 260 → 290，f = 290/260。
-    // 批次 1（非末）独立取整：cpu = round(10000 ÷ f) = 8966；批次 2（末）以权威
-    // 总成本 46000 分倒推闭合：cpu = 17931。两端逐批次取值同一，不靠纪律。
     let lots_a = lots_of(&conn_a, "inst-sp");
     assert_eq!(lots_a.len(), 2);
     assert_eq!(lots_a[0].0, buy1);
@@ -229,7 +204,6 @@ fn split_create_replay_converges_lots_and_restatement() {
     let holding: f64 = lots_a.iter().map(|l| l.2).sum();
     assert!((holding - 290.0).abs() < 1e-9, "最终持仓 = 260 + Δ30 = 290");
 
-    // split 零已实现盈亏、行金额恒 0（无现金腿）。
     assert_eq!(split_extension(&conn_a, &split_id), Some((30.0, None)));
     assert_eq!(
         read_transaction(&conn_a, &split_id).unwrap().amount_cents,
@@ -255,7 +229,6 @@ fn split_dependency_missing_parks_then_redelivery_self_heals() {
     let wire = wire_out(&conn_a);
     let (buy_wire, split_wire) = (vec![wire[0].clone()], vec![wire[1].clone()]);
 
-    // 依赖倒挂：只投递 split op——本地零在用持仓，无从重述，零持仓守卫挂起、不落日志。
     let reports = wire_in(&conn_b, &split_wire);
     assert!(
         matches!(&reports[0].outcome, OpOutcome::Parked { code, .. } if code == "trade.split-no-holding"),
@@ -270,7 +243,6 @@ fn split_dependency_missing_parks_then_redelivery_self_heals() {
     );
     assert!(split_extension(&conn_b, &split_id).is_none());
 
-    // 买入 op 补达后重投递 split op：本地重建重述成功，重放收敛并出队。
     wire_in(&conn_b, &buy_wire);
     assert_eq!(
         parked_ops(&conn_b).unwrap().len(),
@@ -294,8 +266,6 @@ fn split_op_with_divergent_restatement_parks_without_booking() {
     let wire = wire_out(&conn_a);
     wire_in(&conn_b, &[wire[0].clone()]);
 
-    // 源端锚点被篡改（或本地快照发散）：本地重建的最终持仓与源端携带值不一致，
-    // 显式失败挂起，不静默落出错误持仓与成本基础（ADR-0106 决策 9）。
     let mut tampered: serde_json::Value = serde_json::from_str(&wire[1]).unwrap();
     tampered["command"]["payload"]["split"]["final_quantity"] = serde_json::json!(999.0);
     let reports = wire_in(&conn_b, &[serde_json::to_string(&tampered).unwrap()]);
@@ -314,7 +284,6 @@ fn split_op_with_divergent_restatement_parks_without_booking() {
     );
     assert_eq!(parked_ops(&conn_b).unwrap().len(), 1);
 
-    // 总成本锚点发散同规挂起。
     let mut tampered: serde_json::Value = serde_json::from_str(&wire[1]).unwrap();
     tampered["command"]["payload"]["split"]["total_cost_cents"] = serde_json::json!(1);
     let reports = wire_in(&conn_b, &[serde_json::to_string(&tampered).unwrap()]);
@@ -335,8 +304,6 @@ fn legacy_split_op_without_fields_parks_without_booking() {
     let wire = wire_out(&conn_a);
     wire_in(&conn_b, &[wire[0].clone()]);
 
-    // 旧端产出的 split op（有行无份额调整字段）：kind 防御臂显式失败挂起，不落半套
-    // 副作用、不静默落出未经校验的重述（与 convert 旧载荷同规，ADR-0099 决策 6）。
     let mut legacy: serde_json::Value = serde_json::from_str(&wire[1]).unwrap();
     let removed = legacy["command"]["payload"]
         .as_object_mut()
@@ -371,7 +338,6 @@ fn split_update_and_delete_replay_converge() {
     wire_in(&conn_b, &wire_out(&conn_a));
     assert_split_converged(&conn_a, &conn_b, &split_id);
 
-    // 就地修改：Δ 20 → 50（先按审计精确回补旧重述，再按新 Δ 重建重述）。
     protocol::update(&conn_a, &split_id, split_input("acc-sp", "inst-sp", 50.0)).unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
     assert_eq!(
@@ -381,7 +347,6 @@ fn split_update_and_delete_replay_converge() {
     );
     assert_split_converged(&conn_a, &conn_b, &split_id);
 
-    // 删除重放：按重述审计逐批次精确回补（数量与每份成本含舍入一并还原），扩展行清除。
     protocol::delete(&conn_a, &split_id).unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
     assert_eq!(read_transaction(&conn_a, &split_id).unwrap().is_deleted, 1);

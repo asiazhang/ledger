@@ -6,7 +6,6 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import { PRICES_CHANGED_EVENT, usePricesChanged } from "@/investment/usePricesChanged";
 
-/** 承载 composable 生命周期的宿主组件。 */
 function mountHost(callback: () => void) {
   const Host = defineComponent({
     setup() {
@@ -28,7 +27,6 @@ describe("usePricesChanged 价格失效信号订阅基座（issue #237 / ADR-003
 
     expect(mockListen).toHaveBeenCalledTimes(1);
     expect(mockListen).toHaveBeenCalledWith(PRICES_CHANGED_EVENT, expect.any(Function));
-    // 常量单点定义：事件名即 ADR-0031 的 ledger:prices-changed
     expect(PRICES_CHANGED_EVENT).toBe("ledger:prices-changed");
     expect(readRegistered()).toBeTypeOf("function");
   });
@@ -51,7 +49,7 @@ describe("usePricesChanged 价格失效信号订阅基座（issue #237 / ADR-003
     mockListen.mockResolvedValue(unlisten as unknown as UnlistenFn);
 
     const wrapper = mountHost(() => {});
-    await flushPromises(); // listen 注册异步落定
+    await flushPromises();
     wrapper.unmount();
     expect(unlisten).toHaveBeenCalledTimes(1);
   });
@@ -70,7 +68,6 @@ describe("usePricesChanged 价格失效信号订阅基座（issue #237 / ADR-003
     wrapper.unmount();
     expect(unlisten).not.toHaveBeenCalled();
 
-    // 卸载后注册才落定：应立即注销，而非挂到已卸载组件上
     release(unlisten as unknown as UnlistenFn);
     await flushPromises();
     expect(unlisten).toHaveBeenCalledTimes(1);
@@ -80,7 +77,6 @@ describe("usePricesChanged 价格失效信号订阅基座（issue #237 / ADR-003
     mockListen.mockRejectedValue(new Error("注册失败"));
 
     const wrapper = mountHost(() => {});
-    // 注册失败时卸载不得因 unlisten 未就绪而报错
     expect(() => wrapper.unmount()).not.toThrow();
   });
 });

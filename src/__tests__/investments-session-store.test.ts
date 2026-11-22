@@ -37,7 +37,6 @@ describe("useInvestmentsSessionStore（issue #1192 投资页会话状态）", ()
     });
     expect(useInvestmentsSessionStore().holdingsPage).toBe(3);
 
-    // 新 pinia = 冷启动：全部回默认
     setActivePinia(createPinia());
     const cold = useInvestmentsSessionStore();
     expect(cold.activeTab).toBe("overview");
@@ -52,7 +51,6 @@ describe("useInvestmentsSessionStore（issue #1192 投资页会话状态）", ()
     store.setPage(2);
     store.setSearch("600");
     expect(store.holdingsSearchInput).toBe("600");
-    // 防抖窗口内应用值未变、页码不归零
     expect(store.holdingsSearch).toBe("");
     expect(store.holdingsPage).toBe(2);
     vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
@@ -66,7 +64,6 @@ describe("useInvestmentsSessionStore（issue #1192 投资页会话状态）", ()
     store.setPage(2);
     store.setSorter({ columnKey: "unrealized_pnl", order: "ascend" });
     expect(store.holdingsPage).toBe(2);
-    // order=false（naive-ui 第三态）清除排序：属实际变化
     store.setSorter({ columnKey: "unrealized_pnl", order: false });
     expect(store.holdingsSorter).toBeNull();
     expect(store.holdingsPage).toBe(1);
@@ -123,7 +120,6 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
     const store = useInvestmentsSessionStore();
     store.setSearch("600");
     store.resetToDefault();
-    // 防抖窗口推进后应用值仍为空：复位已撤销在途定时器
     vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 2);
     expect(store.holdingsSearch).toBe("");
     expect(store.holdingsSearchInput).toBe("");
@@ -132,16 +128,13 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
   it("复位语义优先：已应用搜索时 ESC 复位后回显与应用值同为默认空、定时器已撤销", () => {
     vi.useFakeTimers();
     const store = useInvestmentsSessionStore();
-    // 先应用一个搜索（回显 = 应用值 = '600'）
     store.setSearch("600");
     vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
     expect(store.holdingsSearch).toBe("600");
     expect(store.holdingsSearchInput).toBe("600");
     store.resetToDefault();
-    // 复位即回默认：回显不得残留旧应用值
     expect(store.holdingsSearch).toBe("");
     expect(store.holdingsSearchInput).toBe("");
-    // 复位后再输入一个值但未到防抖窗口，再复位：旧输入不落地
     store.setSearch("000001");
     store.resetToDefault();
     vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 2);
@@ -155,12 +148,10 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
     store.setSearch("600");
     vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
     expect(store.holdingsSearch).toBe("600");
-    // 已应用后再输入但未到防抖窗口：离开视图
     store.setSearch("600000");
     expect(store.holdingsSearchInput).toBe("600000");
     store.cancelPendingSearch();
     vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 2);
-    // 未应用的新输入被撤销，应用值与回显一致地停在最后应用值
     expect(store.holdingsSearch).toBe("600");
     expect(store.holdingsSearchInput).toBe("600");
   });
@@ -186,11 +177,6 @@ describe("store 写路径唯一（issue #1192 Standards 轴 finding）", () => {
   });
 });
 
-/**
- * 明细页签筛选与分页（ADR-0135 决策 3 / issue #1779）：类型多选筛选与页码/页大小
- * 入投资页会话 store（会话内保留、冷启动回默认，ADR-0094 默认粒度）。语义与主列表
- * 类型维度同构：空集合 ≡ 不过滤 ≡ 默认态；维度实际变化翻页归零；页大小切换翻回第 1 页。
- */
 describe("明细页签筛选与分页（ADR-0135 / issue #1779）", () => {
   it("冷启动默认：无类型筛选、第 1 页、默认页大小", () => {
     const store = useInvestmentsSessionStore();
@@ -215,13 +201,10 @@ describe("明细页签筛选与分页（ADR-0135 / issue #1779）", () => {
     store.setDetailPage(3);
     store.setDetailKinds(["sell"]);
     expect(store.detailPage).toBe(1);
-    // 集合实际变化（扩大）→ 翻页归零
     store.setDetailKinds(["buy", "sell"]);
     expect(store.detailPage).toBe(1);
     store.setDetailPage(2);
-    // 同一集合不同顺序：同值重设，不翻页归零
     store.setDetailKinds(["sell", "buy"]);
-    // 同值守卫不动作：保留态保持首写顺序，也不触发翻页归零
     expect(store.detailKinds).toEqual(["buy", "sell"]);
     expect(store.detailPage).toBe(2);
   });
@@ -235,12 +218,6 @@ describe("明细页签筛选与分页（ADR-0135 / issue #1779）", () => {
   });
 });
 
-/**
- * 明细页签筛选全维（issue #1780 / ADR-0135 决策 3）：账户（涉及账户语义——账户端 ∪
- * 出资端）、标的（convert 两腿任一命中即算）与日期（双端有界，picker 成对写入/清除）
- * 与类型同住会话 store：写入入口、同值幂等、任一维度实际变化翻页归零、会话内保留、
- * 冷启动回默认、ESC 复位清零。
- */
 describe("明细页签筛选全维（issue #1780：账户/标的/日期）", () => {
   it("冷启动默认：三维均为 null（无筛选）", () => {
     const store = useInvestmentsSessionStore();
@@ -260,7 +237,6 @@ describe("明细页签筛选全维（issue #1780：账户/标的/日期）", () 
     expect(again.detailInstrumentId).toBe("inst-1");
     expect(again.detailDateFrom).toBe("2026-01-01");
     expect(again.detailDateTo).toBe("2026-03-31");
-    // 新 pinia = 冷启动：回默认
     setActivePinia(createPinia());
     const cold = useInvestmentsSessionStore();
     expect(cold.detailAccountId).toBeNull();
@@ -278,11 +254,9 @@ describe("明细页签筛选全维（issue #1780：账户/标的/日期）", () 
     store.setDetailInstrument("inst-1");
     expect(store.detailInstrumentId).toBe("inst-1");
     store.setDetailDateRange(["2026-01-01", "2026-03-31"]);
-    // 同区间重写不动作（picker 受控回显重放同值）
     store.setDetailDateRange(["2026-01-01", "2026-03-31"]);
     expect(store.detailDateFrom).toBe("2026-01-01");
     expect(store.detailDateTo).toBe("2026-03-31");
-    // 清除：null 回默认
     store.setDetailDateRange(null);
     expect(store.detailDateFrom).toBeNull();
     expect(store.detailDateTo).toBeNull();
@@ -298,12 +272,10 @@ describe("明细页签筛选全维（issue #1780：账户/标的/日期）", () 
     store.setDetailDateRange(["2026-01-01", "2026-03-31"]);
     expect(store.detailPage).toBe(1);
     store.setDetailPage(2);
-    // 同值重设（账户/标的/区间）不归零
     store.setDetailAccount("acc-2");
     store.setDetailInstrument("inst-1");
     store.setDetailDateRange(["2026-01-01", "2026-03-31"]);
     expect(store.detailPage).toBe(2);
-    // 清除账户也是实际变化 → 归零
     store.setDetailAccount(null);
     expect(store.detailPage).toBe(1);
   });

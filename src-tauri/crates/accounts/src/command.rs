@@ -1,22 +1,3 @@
-//! 账户同步命令（issue #860 / ADR-0091）：op 载荷的账户域形态、产出单点与重放分派。
-//!
-//! - **载荷形态**（[`AccountCommand`]）：创建携带实体 id + 语义行（类型、币种、
-//!   期初余额、隐藏标志——黑洞账户即建路径同走此命令，`is_hidden` 随行）；修改
-//!   携带解决后的语义值（名称非空、币种为落定值，重放端以同一协议复验依赖后
-//!   落库）；删除只需实体 id。**只增不改**：字段演进只追加可选成员，旧日志可
-//!   在新 schema 重放。
-//!
-//! 归档命令（spec #1952 / ADR-0142 决策 5）：归档 / 恢复是**独立命令变体**
-//! [`AccountCommand::SetArchived`]（携带目标状态，幂等），不往既有修改命令的
-//! 载荷塞字段——Update 载荷是「落定值」语义（信用卡三件套缺键即置空），旧日志
-//! 重放会把归档态刷回未归档。新增枚举变体的兼容面：旧日志不含 `set_archived`
-//! tag（枚举只加成员不改既有成员 = 旧日志可读）；新日志在旧端 serde 失败 →
-//! ParkedOp（schema 版本门先行拦截，ADR-0091 / ADR-0142 代价节声明）。
-//! - **产出单点**（[`record_local`]）：账户写编排入口（创建 / 修改 / 删除 /
-//!   黑洞即建）成功后调用，op 随写事务提交/回滚。
-//! - **重放执行**（[`replay_command`]）：与本地写同一执行协议（依赖校验 + 落库），
-//!   不产出 op——外来 op 由同步引擎落日志。
-
 use std::borrow::Cow;
 
 use rusqlite::Connection;
@@ -28,32 +9,25 @@ use ledger_sync_protocol::op::record_local as record_op;
 
 use super::model::AccountType;
 
-/// 账户命令行载荷（语义字段）：簿记戳（created_at/updated_at/version/device_id）
-/// 是各端本地事实，不随行携带（ADR-0091：op 只携带 DeviceId / 逻辑时钟 / schema 版本）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccountCommandRow {
     pub name: String,
     pub kind: AccountType,
     pub currency_code: String,
     pub initial_balance_cents: i64,
-    /// 黑洞账户标志：余额调整即建路径携带 `true`，与种子同形（AI 导入域
-    /// BlackHoleAccount）；常规创建恒 `false`。
     pub is_hidden: bool,
-    /// 信用卡档案字段（spec #1327 / ADR-0119）：仅 `credit` 账户可携带，
-    /// `None` = 未设置；旧日志无此三键时 serde 按 `None`（本域语义）承接。
     pub credit_limit_cents: Option<i64>,
     pub statement_day: Option<i64>,
     pub due_day: Option<i64>,
 }
 
-/// 账户同步命令（serde：`action` 判别；作为 DomainCommand 信封的 payload 内嵌）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum AccountCommand {
-    /// 创建账户：实体 id 与语义行随命令携带（重放端不得重新生成 id）。
-    Create { id: String, row: AccountCommandRow },
-    /// 修改账户（名称 / 币种 / 信用卡档案为解决后的**落定值**，与本地修改同语义）。
-    /// 信用卡档案三字段一律为落定值（`None` = 置空），不存在「不改」形态。
+    Create {
+        id: String,
+        row: AccountCommandRow,
+    },
     Update {
         id: String,
         name: String,
@@ -62,15 +36,16 @@ pub enum AccountCommand {
         statement_day: Option<i64>,
         due_day: Option<i64>,
     },
-    /// 删除账户（软删除）：实体 id 足够——重放端执行与本地删除同一协议。
-    Delete { id: String },
-    /// 归档 / 恢复账户（spec #1952 / ADR-0142 决策 5）：携带目标状态，幂等；
-    /// LWW 裁决域仍是单个账户。不进 Update 载荷的理由见模块头注记。
-    SetArchived { id: String, archived: bool },
+    Delete {
+        id: String,
+    },
+    SetArchived {
+        id: String,
+        archived: bool,
+    },
 }
 
 impl AccountCommand {
-    /// 命令指向的实体 id（LWW 裁决域 = 单个账户）。
     pub(crate) fn subject_id(&self) -> &str {
         match self {
             AccountCommand::Create { id, .. }
@@ -81,8 +56,6 @@ impl AccountCommand {
     }
 }
 
-/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
-/// 实体键派生是域自身知识；op 产出直呼协议面（环依赖由 crate 依赖图断开）。
 impl SyncCommand for AccountCommand {
     const ENTITY: &'static str = "account";
 
@@ -91,18 +64,11 @@ impl SyncCommand for AccountCommand {
     }
 }
 
-/// op 产出接缝（账户域集中单点）：本地账户写成功后追加一条 op 进本机 OpLog。
-///
-/// 仅账户写编排入口（`accounts::core` 的创建 / 修改 / 删除协议与黑洞即建）调用；
-/// 随编排事务提交/回滚，写失败不残留 op。
 pub(crate) fn record_local(conn: &Connection, command: AccountCommand) -> Result<()> {
     record_op(conn, &command)?;
     Ok(())
 }
 
-/// 重放执行（同步引擎分派接缝）：按动作转发到与本地写同一执行协议。
-/// 跨 crate 消费（sync_engine::registry 经根包再导出面调用，#1093 crate 化
-/// 时 pub(crate)→pub，签名与语义不变）。
 pub fn replay_command(conn: &Connection, command: &AccountCommand) -> Result<()> {
     match command {
         AccountCommand::Create { id, row } => super::core::replay_create(conn, id, row),

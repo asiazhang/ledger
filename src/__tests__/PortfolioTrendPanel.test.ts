@@ -12,8 +12,6 @@ vi.mock("vue-chartjs", async () => {
   return { Line: LineChartStub };
 });
 
-// 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
-// 测试中手动触发模拟后端 emit；捕获/触发辅助收在 prices-changed-mock 共享。
 vi.mock("@/investment/usePricesChanged", async () => {
   const { capturePricesChangedHandler } = await import("./prices-changed-mock");
   return {
@@ -29,7 +27,6 @@ const portfolioTrend: PortfolioValueTrend = {
   ],
 };
 
-/** 组合走势默认应答（函数型，保持既有形态）。 */
 const portfolioTrendResponse = () => Promise.resolve(portfolioTrend);
 
 beforeEach(async () => {
@@ -58,7 +55,6 @@ describe("PortfolioTrendPanel 走势卡（#1907 起随概览页签）", () => {
     const payload = chartPayload(wrapper);
     expect(payload.labels).toEqual(["2026-06-05", "2026-06-12"]);
     expect(payload.datasets[0].data).toEqual([100000, 110000]);
-    // 本位币口径标注
     expect(wrapper.get('[data-testid="trend-currency"]').text()).toContain("CNY");
     expect(wrapper.get('[data-testid="trend-currency"]').text()).toContain("本位币");
   });
@@ -70,7 +66,6 @@ describe("PortfolioTrendPanel 走势卡（#1907 起随概览页签）", () => {
     for (const label of ["1 月", "3 月", "1 年", "3 年", "5 年", "全部"]) {
       expect(text).toContain(label);
     }
-    // 单标的模式随走势页签退役：不再出现模式切换话术
     expect(text).not.toContain("单标的");
   });
 
@@ -78,7 +73,6 @@ describe("PortfolioTrendPanel 走势卡（#1907 起随概览页签）", () => {
     const wrapper = mount(PortfolioTrendPanel);
     await flushPromises();
     const before = mockInvoke.mock.calls.filter(([c]) => c === "portfolio_value_trend").length;
-    // 点击「1 月」预设
     const radio = wrapper.findAll(".n-radio").find((r) => r.text() === "1 月");
     expect(radio).toBeTruthy();
     await radio!.find("input").setValue(true);
@@ -98,8 +92,6 @@ describe("PortfolioTrendPanel 走势卡（#1907 起随概览页签）", () => {
     const wrapper = mount(PortfolioTrendPanel);
     await flushPromises();
     expect(wrapper.text()).toContain("暂无历史价格数据");
-    // 回填文案退场（issue #1377）：同步只刷现价，历史归后台补全——按了也不会
-    // 立即有曲线，指向按钮即死路
     expect(wrapper.text()).not.toContain("同步标的信息");
     expect(wrapper.text()).toContain("更长的区间");
     expect(wrapper.find('[data-testid="line-chart"]').exists()).toBe(false);
@@ -120,7 +112,6 @@ describe("PortfolioTrendPanel 走势卡（#1907 起随概览页签）", () => {
     const extra = wrapper.get('[data-testid="trend-empty-backfill"]');
     expect(extra.text()).toContain("补全中");
     expect(extra.text()).toContain("13/228");
-    // 三态均不指向同步按钮（存在性断言：删掉三态分支即变红）
     expect(wrapper.text()).not.toContain("同步标的信息");
   });
 
@@ -130,21 +121,17 @@ describe("PortfolioTrendPanel 走势卡（#1907 起随概览页签）", () => {
     const before = mockInvoke.mock.calls.filter(([c]) => c === "portfolio_value_trend").length;
     firePricesChanged();
     await flushPromises();
-    // 同步写价后键未变，但同键去重短路必须让位于信号重拉，否则走势留陈旧点
     const calls = mockInvoke.mock.calls.filter(([c]) => c === "portfolio_value_trend");
     expect(calls.length).toBe(before + 1);
-    // 图表序列随重拉结果刷新
     expect(chartPayload(wrapper).datasets[0].data).toEqual([100000, 110000]);
   });
 
   it("曲线口径说明：组合市值概念的常驻 ⓘ（issue #1369）", async () => {
     const wrapper = mount(PortfolioTrendPanel);
     await flushPromises();
-    // 断言对准用户可观察结果：删掉口径说明接线即找不到触发器、本用例变红
     const trigger = wrapper.find('[data-testid="trend-concept-info"]');
     expect(trigger.exists()).toBe(true);
     expect(trigger.attributes("aria-label")).toBe("组合市值说明");
-    // 组合曲线画的是历史市值：不含现金账户、跨币种用同期历史汇率（不是当期汇率）
     const tip = await hoverTipText(trigger);
     expect(tip).toContain("历史市值");
     expect(tip).toContain("同期历史汇率");

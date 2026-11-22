@@ -8,24 +8,13 @@ import { instrumentDisplayLabel } from "@/investment/instrument-display-label";
 import OrderSection from "@/transaction/OrderSection.vue";
 import type { TransactionModalRow, TransactionConvert } from "@ledger/types";
 
-/**
- * 基金转换只读详情（ADR-0106 决策 10 / #1048）：convert 是「无现金腿」kind，界面不体现
- * 任何写操作——无创建入口、无编辑、无软删；本组件只读呈现「A → B」两侧标的、份额、
- * 金额、手续费与结转成本，写入与纠错仍走 HTTP 契约（AI / 迁移侧）。
- *
- * 金额展示统一走 formatAmount / formatQuantity 单点（含金额隐私模式）；行金额锚点是
- * 结转成本而非确认单金额，列表展示口径（转出金额）与锚点在此分列呈现，避免混淆。
- */
 const props = defineProps<{
-  /** 转换交易行（提供日期 / 账户 / 备注） */
   transaction: TransactionModalRow;
-  /** 转换两腿明细（`get_transaction_convert` 读投影） */
   convert: TransactionConvert;
 }>();
 
 const reference = useReferenceStore();
 
-/** 账户名经参考数据解析，未知账户回退占位（与列表账户列同口径，不抛错）。 */
 const accountName = computed(
   () => reference.accountMap.get(props.transaction.account_id ?? "")?.name ?? "—",
 );

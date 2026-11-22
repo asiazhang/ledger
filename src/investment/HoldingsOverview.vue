@@ -28,18 +28,7 @@ import { sumFixedColumnWidths } from "@ledger/utils/table";
 const reference = useReferenceStore();
 const appStore = useAppStore();
 
-// 数据拉取（list_holdings + 持仓标的字典拼装）归 usePortfolioOverview——与首页
-// 投资概览卡共享同一拼装接缝（issue #901/#902 契约不动）；过滤/排序/合计派生
-// 与页码归 useHoldingsFilter，全在前端内存完成；状态住投资页会话 store
-// （issue #1192，ADR-0094 会话内保留）：页签重挂恢复离开时的筛选/排序/页码，
-// 冷启动回默认，零写盘。
-// 累计收益是全账本口径、不随三维过滤收窄（已实现腿无法归到某行可见持仓），
-// 故直接来自 usePortfolioOverview 而非 useHoldingsFilter；累计收益卡为折本位币
-// 单值（issue #1797），缺折算汇率码化上抛 → 卡面警告 + 重试，不拖累持仓行装配。
 const { rows, loading, refresh, cumulativePnl, nativeCurrency } = usePortfolioOverview();
-// 资金加权收益率（issue #1195 / ADR-0115）：与金额口径并列的比例列，同一请求
-// 内自取（三消费面共用一次 money_weighted_return_summary）；期末市值随行情，
-// 价格失效信号重拉内化在本接缝（与上方 usePricesChanged 各自订阅，消费方自选）。
 const { instrumentMwr } = useMoneyWeightedReturn();
 const {
   searchInput,
@@ -54,27 +43,12 @@ const {
   accountOptions,
 } = useHoldingsFilter(rows);
 
-// 同步按钮复用 T4 的同步接缝（useInstrumentInfoSync），两处行为一致：
-// 按钮 loading + 轻量消息反馈 + 确定进度条（issue #897，与标的页同一份
-// SyncProgressBar 展示组件、同一份共享进度状态）。同步后重拉不绑在调用方自觉里：后端实际
-// 写价后 emit 价格失效信号（ADR-0031），此处订阅重拉现价/市值（含本卡
-// 所在隐藏 tab 常驻挂载的场景）；失败/零更新后端不 emit，无谓重拉也不发生。
 const { syncing, resultMessage, status, progress, degraded, sync } = useInstrumentInfoSync();
 
 usePricesChanged(() => {
   void refresh();
 });
 
-// ---------------------------------------------------------------------------
-// 缺价行可执行引导（issue #1193）：缺价行（市值/收益/合计一并缺）此前只显示
-// 「-」，用户拿不到下一步。行内按**后端派生的价格通道事实**分流（只读
-// `row.priceChannel`，前端不按类型 × 市场另推通道，词汇表「价格通道」）：
-// 行情 / 净值通道 → 触发既有「同步标的信息」接缝（与卡顶按钮同一份
-// useInstrumentInfoSync，在途短路天然复用）；手动报价通道 → 打开既有
-// ManualPriceModal（与标的页行内「录价」同一弹窗、同一 record_manual_price
-// 命令）；无来源 / 通道未知 → 不给引导（没有可落地的既有入口）。
-// 两个落点都是既有入口本身，不新增第二套触发机制。
-// ---------------------------------------------------------------------------
 const quoteTarget = ref<{ id: string; symbol: string } | null>(null);
 const quoteOpen = ref(false);
 const quoteMessage = ref<string | null>(null);
@@ -85,17 +59,13 @@ function openQuote(row: PortfolioRow) {
 }
 
 function onQuoted(message: string) {
-  // 只记页面级回执：行内现价/市值刷新由价格失效信号驱动（ADR-0031），不手动重拉
   quoteMessage.value = message;
 }
 
-/** 缺价行引导 testid 的行身份键：账户 + 标的（v_holdings 一行 = 一个账户一只标的），
- * 同一标的跨账户持仓时各行互不撞车（symbol 会重复，不能作行身份）。 */
 function priceGuideRowKey(row: PortfolioRow) {
   return `${row.accountId}-${row.instrumentId}`;
 }
 
-/** 缺价行的引导动作（无引导时返回 null）：判定单点是 row.priceChannel（后端派生事实） */
 function missingPriceAction(row: PortfolioRow) {
   const testidBase = priceGuideRowKey(row);
   if (row.priceChannel === "manual") {
@@ -129,21 +99,10 @@ function missingPriceAction(row: PortfolioRow) {
   return null;
 }
 
-// 盈亏数字着色：红涨绿跌（A股/基金语境，词汇表「盈亏涨跌色」），随主题取亮/暗变体
-
-// 市值/未实现盈亏两列列头排序为受控形态（sorter: true + 受控 sortOrder）：
-// 排序状态与行集合产出都归 useHoldingsFilter，表头只回传点击意图。
 function columnSortOrder(key: HoldingsSortColumn) {
   return sorter.value?.columnKey === key ? sorter.value.order : false;
 }
 
-// 分页（issue #912；页码随会话保留见 issue #1192）：页码状态归 useHoldingsFilter
-// （三维任一变化即翻页归零，会话内保留、冷启动回默认），切片由表格内置分页完成
-// （客户端模式按页码内存切片，itemCount 缺省取行集长度）；页大小固定 20 不设
-// 选择器；单页时收起分页条（paginate-single-page=false，≤20 行全量直显不出
-// 翻页噪声）。合计/空态在切片前判定（派生自 filteredRows），与可见页无关。
-// 恢复页码越界时由 useHoldingsFilter 钳制到有效范围并回写保留态（见该模块），
-// 视图只读消费——此处不再二次钳制。
 const pagination = computed(() => ({
   page: page.value,
   pageSize: HOLDINGS_PAGE_SIZE,
@@ -152,20 +111,13 @@ const pagination = computed(() => ({
   },
 }));
 
-// 横向滚动下限 = 各固定列宽总和（全仓单一收口）：名称列是唯一弹性列（minWidth
-// 不计入），窄窗口由横向滚动吸收（本表不设窗口分级分支，#898 边界维持；
-// 标的页签表格的移动档 scroll-x 分支见 InstrumentBrowser，issue #849）。
 const scrollX = computed(() => sumFixedColumnWidths(overviewColumns.value));
 
-// 列形态遵循词汇表「表格列形态」约定：数值列右对齐 + 等宽数字（className 单点
-// 挂全局工具类），长名称列弹性 + 单行 ellipsis 悬停全名，短内容列按内容定宽。
 const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
   {
     title: t("investments.holdings.columns.symbol"),
     key: "symbol",
     width: 100,
-    // 标的代码列下钻（ADR-0135 决策 6）：跳投资页明细页签 ?tab=detail&account=&instrument=
-    // （该账户该标的的投资交易历史；不带账户的用法 = 已清仓标的形态）；无代码渲染纯文本「-」。
     render: (r) =>
       h(InstrumentLink, {
         instrumentId: r.instrumentId,
@@ -176,7 +128,6 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
   {
     title: t("investments.holdings.columns.name"),
     key: "instrumentName",
-    // 唯一弹性列：不设固定宽，独吃窗口剩余宽度；minWidth 保窄窗口下限
     minWidth: 160,
     ellipsis: { tooltip: true },
     render: (r) => r.instrumentName ?? "-",
@@ -197,7 +148,6 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     render: (r) => formatQuantity(r.quantity),
   },
   {
-    // 成本口径（issue #1369）：FIFO 剩余批次成本，易被读成「累计投入」
     title: () =>
       h(ConceptLabel, {
         label: t("investments.holdings.columns.cost"),
@@ -211,7 +161,6 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     render: (r) => formatAmount(r.costBasisCents, reference.currencyMap.get(r.costCurrencyCode)),
   },
   {
-    // 现价口径（issue #1369）：基金行显示的是最新**单位净值**，列名不随类型改名
     title: () =>
       h(ConceptLabel, {
         label: t("investments.holdings.columns.price"),
@@ -222,10 +171,6 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     width: 110,
     align: "right",
     className: "tabular-nums",
-    // 现价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示；
-    // 净值日期已独立成列（issue #912），本列恢复单行渲染。
-    // 缺价行（issue #1193）：空值语义仍是「-」，其后就地给下一步引导
-    // （行情/净值通道 → 同步标的信息，手动报价通道 → 录价；见 missingPriceAction）。
     render: (r) => {
       if (r.latestPriceCents !== null) {
         return formatPrice(
@@ -247,12 +192,9 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     width: 100,
     align: "right",
     className: "tabular-nums",
-    // 净值日期独立成列（#303 形态修订，issue #912）：仅基金行携带（现价 =
-    // 最新公布单位净值），其余行显示「-」；不可排序。
     render: (r) => r.latestNavDate ?? "-",
   },
   {
-    // 市值口径（issue #1369）：与合计三卡同一概念、不同标签（市值 vs 总市值）
     title: () =>
       h(ConceptLabel, {
         label: t("investments.holdings.columns.marketValue"),
@@ -271,7 +213,6 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
         : formatAmount(r.marketValueCents, reference.currencyMap.get(r.valueCurrencyCode)),
   },
   {
-    // 持仓收益口径（issue #1369）：与合计三卡同一概念（展示词 = 未实现盈亏）
     title: () =>
       h(ConceptLabel, {
         label: t("investments.holdings.columns.unrealizedPnl"),
@@ -294,11 +235,6 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     },
   },
   {
-    // 资金加权收益率（issue #1195 / ADR-0115）：与金额口径并列、互不换算；
-    // 三态分流与口径标注收口在 renderMwrRateCell 单点（与盈亏页收益率卡同款形态）；
-    // 含期初存量的标的按行携带的 basis 带角标「*」（issue #1343，解释双轴可达）。
-    // 收益率口径（issue #1369）：三态与「不随筛选收窄」需在场说明（该属性写在
-    // mwrTip 正文里——它不随页面语境变化，故不挂作用域变体）
     title: () =>
       h(ConceptLabel, {
         label: t("investments.holdings.columns.mwr"),

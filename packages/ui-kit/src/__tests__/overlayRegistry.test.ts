@@ -118,13 +118,10 @@ describe("AppSelect 封装契约：NSelect 的 update:show 驱动注册表", () 
     expect(hasOpenOverlay()).toBe(true);
     inner.vm.$emit("update:show", false);
     expect(hasOpenOverlay()).toBe(false);
-    // update:show 经 attrs 合并照常到达调用方（v-model:show 兼容）
     expect(received).toEqual([true, false]);
   });
 
   it("受控 show 变更同样驱动注册表（attrs watch 兜底）", async () => {
-    // AppSelect 刻意不声明 show（见其头注释）：:show 经 attrs 透传 + watch 兜底。
-    // 以带声明的宿主组件按生产方式绑定 :show，宿主 setProps 驱动 attrs 变更。
     const Host = defineComponent({
       props: { show: { type: Boolean, required: true } },
       setup: (props) => () => h(AppSelect, { options: [], show: props.show }),
@@ -182,7 +179,6 @@ describe("封装关闭通道（closeTopOverlay 消费面，issue #845）", () =>
     expect(closeTopOverlay()).toBe(true);
     await flushPromises();
     expect(hasOpenOverlay()).toBe(false);
-    // 菜单 DOM 是懒传送门残留（display:none，ADR-0035 已知语义），关闭判定看注册表
     const menu = document.querySelector(".n-base-select-menu");
     expect(menu?.getAttribute("style")).toContain("display: none");
     wrapper.unmount();
@@ -301,7 +297,6 @@ describe("封装关闭通道（closeTopOverlay 消费面，issue #845）", () =>
 
 describe("真回归（筛选下拉关闭后快捷键永久失效）：真实 PinyinSelect 开→选→关，注册表必须归零", () => {
   beforeAll(() => {
-    // jsdom 未实现 Element.scrollTo，naive-ui 菜单内的 VirtualList 需要它
     Element.prototype.scrollTo = () => {};
   });
 
@@ -317,14 +312,10 @@ describe("真回归（筛选下拉关闭后快捷键永久失效）：真实 Pin
     });
     expect(hasOpenOverlay()).toBe(false);
 
-    // 打开菜单 → naive-ui 非受控模式经 update:show 上报
     await wrapper.find(".n-base-selection").trigger("click");
     await flushPromises();
     expect(hasOpenOverlay()).toBe(true);
 
-    // 点选选项 → 菜单关闭 → 必须撤销上报（旧实现：菜单 display:none 残留
-    // body，存在性嗅探永久判「打开」，两套快捷键自此静默失效）
-    // 注意：菜单经 VFollower teleport 到 body，不在 wrapper 子树内，需原生查 DOM
     const option = document.querySelector(".n-base-select-option");
     expect(option).not.toBeNull();
     option!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -344,7 +335,6 @@ describe("真回归（筛选下拉关闭后快捷键永久失效）：真实 Pin
     await flushPromises();
     expect(hasOpenOverlay()).toBe(true);
 
-    // 点击外部关闭：naive-ui 的 clickoutside 指令监听 document 的 mousedown+mouseup
     for (const type of ["mousedown", "mouseup"]) {
       document.body.dispatchEvent(new MouseEvent(type, { bubbles: true }));
     }

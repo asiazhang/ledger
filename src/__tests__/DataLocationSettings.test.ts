@@ -16,8 +16,6 @@ import AppDangerConfirmModal from "@ledger/ui-kit/AppDangerConfirmModal.vue";
 
 const mockOpen = vi.mocked(open);
 
-// 剧本剪贴板（issue #653）：断言写入内容与成功/失败提示分支（父 spec 测试决策：
-// 组件测试中 mock 剪贴板对象，断言写入内容与成功提示）。
 const writeText = vi.fn().mockResolvedValue(undefined);
 
 const baseInfo: DataLocationInfo = {
@@ -140,7 +138,6 @@ describe("DataLocationSettings.vue", () => {
     await findButton(wrapper, "更改")!.trigger("click");
     await flushPromises();
 
-    // 二选一确认弹窗（issue #652 / ADR-0078）：warning 级，按钮文案即语义
     expect(findBodyButtonByTestId("danger-confirm")!.text()).toContain("接管该库");
     expect(findBodyButtonByTestId("danger-confirm")!.classes()).toContain("n-button--warning-type");
     expect(findBodyButtonByTestId("danger-cancel")!.text()).toContain("取消换位");
@@ -209,13 +206,11 @@ describe("DataLocationSettings.vue", () => {
     await flushPromises();
     await findButton(wrapper, "更改")!.trigger("click");
     await flushPromises();
-    // 模拟 ESC/✕ 关闭（AppModal 关闭意图 → update:show(false)）
     wrapper.findComponent(AppDangerConfirmModal).vm.$emit("update:show", false);
     await flushPromises();
     expect(submits).toBe(1);
     expect(messageApi.info).toHaveBeenCalled();
 
-    // 悬挂已清：下次更改重新走完整流程，不误续接上一次的 adoptExisting=true
     await findButton(wrapper, "更改")!.trigger("click");
     await flushPromises();
     expect(submits).toBe(2);
@@ -246,7 +241,6 @@ describe("DataLocationSettings.vue", () => {
     await findButton(wrapper, "更改")!.trigger("click");
     await flushPromises();
     expect(messageApi.error).toHaveBeenCalled();
-    // 状态未被假装成已提交：仍然没有待重启提示
     expect(wrapper.html()).not.toContain("待重启生效");
     expect(wrapper.html()).toContain("/Users/me/Library/Application Support/ledger");
   });
@@ -255,12 +249,10 @@ describe("DataLocationSettings.vue", () => {
     wireInvokeSeam({ defaults: { get_data_location_info: baseInfo } });
     const wrapper = mount(DataLocationSettings);
     await flushPromises();
-    // 未配置意图目录 ⇔ 处于默认位置：点击不产生任何命令调用。
     await findButton(wrapper, "恢复默认")!.trigger("click");
     await flushPromises();
     expect(mockInvoke).not.toHaveBeenCalledWith("restore_default_data_location", expect.anything());
 
-    // 已配置自定义位置后按钮可用，走与更改相同的提交流。
     mockOpen.mockResolvedValue("/Volumes/Sync/ledger-data");
     wireInvokeSeam({
       defaults: {
@@ -286,7 +278,6 @@ describe("DataLocationSettings.vue", () => {
   });
 
   it("恢复默认走同一路径：restore_default_data_location + 二选一确认复用", async () => {
-    // 已配置自定义位置（configured_dir 非空）时「恢复默认」才可用。
     const current: DataLocationInfo = { ...baseInfo, configured_dir: "/Volumes/Sync/ledger-data" };
     const choice: DataLocationChangeOutcome = {
       requires_choice: true,
@@ -312,7 +303,6 @@ describe("DataLocationSettings.vue", () => {
     await flushPromises();
     await findButton(wrapper, "恢复默认")!.trigger("click");
     await flushPromises();
-    // 目标已有同名库 → 二选一弹窗（与应用内确认同型）确认后续接
     await findBodyButtonByTestId("danger-confirm")!.trigger("click");
     await flushPromises();
     expect(mockInvoke).toHaveBeenNthCalledWith(2, "restore_default_data_location", {
@@ -334,7 +324,6 @@ describe("DataLocationSettings.vue", () => {
       defaults: { get_data_location_info: baseInfo },
       overrides: {
         submit_data_location_change: () => {
-          // 提交后下一次查询返回新意图：展示值必须来自命令返回而非本地推断。
           wireInvokeSeam({
             defaults: {
               get_data_location_info: {

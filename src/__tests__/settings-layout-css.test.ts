@@ -2,15 +2,6 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { setAdapter, removeAdapter } from "@vanilla-extract/css/adapter";
 import { setFileScope, endFileScope } from "@vanilla-extract/css/fileScope";
 
-/**
- * 设置页动态卡片布局 CSS 产出物（issue #651 修订 / ADR-0093）：jsdom 不消费样式表，
- * 组件测试只断言 DOM 钩子（见 SettingsView.test.ts）；单列铺满的 CSS 声明本身经
- * vanilla-extract 官方 adapter 接缝捕获断言（app-modal-mobile-css.test.ts 先例）。
- *
- * settings-layout.css.ts 必须在装好捕获 adapter 之后动态导入：globalStyle 在模块
- * 求值期产出 CSS，静态导入会先于 adapter 装配完成求值。
- */
-
 let cssModule: typeof import("@/settings/settings-layout.css.ts") | null = null;
 type CapturedBlock = { type: string; selector?: string; rule?: Record<string, unknown> };
 let capturedBlocks: CapturedBlock[] = [];
@@ -26,8 +17,6 @@ beforeAll(async () => {
     getIdentOption: () => "short",
   };
   setAdapter(adapter);
-  // vitest 不挂 ve 插件（见 vitest.config.ts）：运行时求值需显式提供 file scope，
-  // 指向真实模块路径使标识符与构建同构。
   setFileScope("src/settings/settings-layout.css.ts");
   try {
     cssModule = await import("@/settings/settings-layout.css.ts");
@@ -38,7 +27,6 @@ beforeAll(async () => {
   capturedBlocks = captured;
 });
 
-/** 取选择器完全相等的捕获块（避免子串命中带上下文的长选择器） */
 function blockExact(selector: string): CapturedBlock {
   const block = capturedBlocks.find((b) => b.selector === selector);
   expect(block, `应存在选择器为 ${selector} 的 CSS 块`).toBeDefined();

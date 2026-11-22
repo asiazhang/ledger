@@ -2,15 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { installMockBackend } from "./index";
 import { invoke } from "./tauri/core";
 
-/**
- * 应用更新域替身测试（issue #1966 / spec #1964 / ADR-0143 决策 1）：环境壳不
- * 模拟更新源——手动检查恒答「已是最新」（same）、更新入口形态答桌面完整更新
- * 面、下载答占位版本回执、安装 void，不发任何进度事件，保证设置页更新卡片
- * 可导航不报错。接缝 = tauri 命令面，删除任一登记行即未命中报错、本文件变红。
- */
-
 beforeEach(() => {
-  installMockBackend(); // 重装即重播种：每用例从夹具种子起步
+  installMockBackend();
 });
 
 describe("应用更新：已是最新常量态", () => {

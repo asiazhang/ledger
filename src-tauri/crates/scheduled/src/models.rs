@@ -1,14 +1,6 @@
-//! 域集中模型（#419 随域归位）：计划/期次/扩展实体与入参、闭集枚举。
-//!
-//! 消费方经 crate 根再导出面逐类型显式 import（域语言短名）。
-
 use serde::{Deserialize, Serialize};
 
 use ledger_infra::db::query::FromRow;
-
-// ---------------------------------------------------------------------------
-// Enums
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -36,8 +28,6 @@ impl std::str::FromStr for ScheduledKind {
             "installment" => Ok(ScheduledKind::Installment),
             "subscription" => Ok(ScheduledKind::Subscription),
             "scheduled_transfer" => Ok(ScheduledKind::ScheduledTransfer),
-            // ADR-0050 码化收口（#1072）：闭集解析未知值报码化参数错误，
-            // message 逐字保留、未知值进 params。
             _ => Err(ledger_infra::error::AppError::codedp(
                 "scheduled-plan.kind-unknown",
                 format!("未知定时交易类型: {s}"),
@@ -47,7 +37,6 @@ impl std::str::FromStr for ScheduledKind {
     }
 }
 
-// rusqlite：从 `scheduled_transactions.kind` 列直接读为枚举（DB 边界）。
 impl rusqlite::types::FromSql for ScheduledKind {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
         let s = value.as_str()?;
@@ -85,7 +74,6 @@ impl std::str::FromStr for ScheduledStatus {
             "paused" => Ok(ScheduledStatus::Paused),
             "cancelled" => Ok(ScheduledStatus::Cancelled),
             "completed" => Ok(ScheduledStatus::Completed),
-            // ADR-0050 码化收口（#1072）：闭集解析未知值报码化参数错误。
             _ => Err(ledger_infra::error::AppError::codedp(
                 "scheduled-plan.status-unknown",
                 format!("未知计划状态: {s}"),
@@ -123,7 +111,6 @@ impl std::str::FromStr for RecurrenceType {
             "weekly" => Ok(RecurrenceType::Weekly),
             "monthly" => Ok(RecurrenceType::Monthly),
             "yearly" => Ok(RecurrenceType::Yearly),
-            // ADR-0050 码化收口（#1072）：闭集解析未知值报码化参数错误。
             _ => Err(ledger_infra::error::AppError::codedp(
                 "scheduled-plan.recurrence-unknown",
                 format!("未知周期类型: {s}"),
@@ -165,7 +152,6 @@ impl std::str::FromStr for OccurrenceStatus {
             "completed" => Ok(OccurrenceStatus::Completed),
             "failed" => Ok(OccurrenceStatus::Failed),
             "cancelled" => Ok(OccurrenceStatus::Cancelled),
-            // ADR-0050 码化收口（#1072）：闭集解析未知值报码化参数错误。
             _ => Err(ledger_infra::error::AppError::codedp(
                 "scheduled-occurrence.status-unknown",
                 format!("未知期次状态: {s}"),
@@ -175,14 +161,9 @@ impl std::str::FromStr for OccurrenceStatus {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Core model
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledTransaction {
     pub id: String,
-    /// 定时交易类型枚举（serde 小写字符串序列化，wire 与裸 String 一致）。
     pub kind: ScheduledKind,
     pub status: String,
     pub account_id: String,
@@ -201,10 +182,6 @@ pub struct ScheduledTransaction {
     pub is_deleted: bool,
 }
 
-// ---------------------------------------------------------------------------
-// Occurrence
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledTransactionOccurrence {
     pub id: String,
@@ -220,14 +197,9 @@ pub struct ScheduledTransactionOccurrence {
     pub is_deleted: bool,
 }
 
-// ---------------------------------------------------------------------------
-// Extension models
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstallmentPlan {
     pub scheduled_transaction_id: String,
-    /// 商户引用（issue #190 / ADR-0028）：counterparty 文本列改 merchant_id，硬删置空。
     pub merchant_id: Option<String>,
     pub total_amount_cents: i64,
     pub total_occurrences: i64,
@@ -236,11 +208,7 @@ pub struct InstallmentPlan {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubscriptionPlan {
     pub scheduled_transaction_id: String,
-    /// 商户引用（issue #190 / ADR-0028）。
     pub merchant_id: Option<String>,
-    /// 保单引用（issue #362 / ADR-0051 决策 2）：保费协议 = 订阅形态持保单引用，
-    /// 1 张保单可对应历史多段协议（价变重建分段）；期次生成流水时复制到
-    /// transactions.policy_id（与商户复制同机制）。可选：普通订阅恒 None。
     pub policy_id: Option<String>,
 }
 
@@ -250,10 +218,6 @@ pub struct ScheduledTransferPlan {
     pub to_account_id: String,
     pub total_occurrences: Option<i64>,
 }
-
-// ---------------------------------------------------------------------------
-// Input / output types for commands
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct CreateScheduledInput {
@@ -267,12 +231,7 @@ pub struct CreateScheduledInput {
     pub recurrence_day: Option<i64>,
     pub start_date: String,
     pub note: Option<String>,
-    // Type-specific（issue #190 / ADR-0028）：installment/subscription 携带商户；
-    // scheduled_transfer 行为层拒绝携带（见 engine::create_plan）。
     pub merchant_id: Option<String>,
-    /// 保单引用（issue #362 / ADR-0051 决策 2）：仅订阅形态可携带（保费协议），
-    /// 分期/定时转账携带即在行为层显式拒绝（见 engine::create_plan）；
-    /// 携带的保单必须存在且未软删除（软删保单不可被新协议选择）。
     pub policy_id: Option<String>,
     pub total_amount_cents: Option<i64>,
     pub total_occurrences: Option<i64>,
@@ -285,9 +244,6 @@ pub struct UpdateStatusInput {
     pub new_status: ScheduledStatus,
 }
 
-/// 金额哨兵字段反序列化（ADR-0023 决策三）：请求体中该 key 一旦出现
-/// （含显式 `null`）即记为 `true`，由领域函数显式拒绝。
-/// 不用 `Option<i64>`：显式 `null` 会被反序列化为 `None` 而漏过拒绝。
 fn de_amount_sentinel<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -297,18 +253,12 @@ where
         .map(|_| true)
 }
 
-/// 订阅编辑输入（issue #162，ADR-0023 决策三）：仅允许金额以外字段
-/// （备注、分类、扣款账户、商户）。`amount_cents` / `total_amount_cents` 为兼容哨兵：
-/// 请求一旦携带即被后端显式拒绝——改价 = 取消旧计划 + 新建，不做「改价对未来生效」。
-/// `merchant_id` 与其他字段同款**全量替换**语义：未携带字段在调用方补齐当前值。
 #[derive(Debug, Deserialize)]
 pub struct UpdateSubscriptionInput {
     pub id: String,
     pub account_id: String,
     pub category_id: Option<String>,
     pub note: Option<String>,
-    /// 商户引用（issue #190 / ADR-0028）：可改商户，编辑只影响未来期次
-    /// （期次执行时从计划扩展表读取 merchant_id）。
     pub merchant_id: Option<String>,
     #[serde(default, deserialize_with = "de_amount_sentinel")]
     pub amount_cents: bool,
@@ -324,9 +274,7 @@ pub struct ExecuteOccurrenceInput {
 #[derive(Debug, Serialize)]
 pub struct ScheduledTransactionWithExt {
     pub core: ScheduledTransaction,
-    /// 商户 id（installment/subscription 可携带；scheduled_transfer 恒为 None）。
     pub merchant_id: Option<String>,
-    /// 保单 id（仅订阅形态可携带，issue #362；其余形态恒为 None）。
     pub policy_id: Option<String>,
     pub total_amount_cents: Option<i64>,
     pub total_occurrences: Option<i64>,
@@ -339,18 +287,9 @@ pub struct ScheduledTransactionDetail {
     pub extension: serde_json::Value,
     pub pending_occurrences: Vec<ScheduledTransactionOccurrence>,
     pub completed_occurrences: i64,
-    /// 已完成期次金额合计（issue #204）：分期进度「已还金额」实时汇总，不持久化。
     pub completed_amount_cents: i64,
-    /// 全量期次列表（issue #205）：含全部状态（pending/processing/completed/failed/
-    /// cancelled），按 scheduled_date 升序——期次详情弹窗的唯一数据源，
-    /// 避免逐状态字段列举遗漏（如取消计划时 pending 批量转 cancelled）。
-    /// 既有 pending/completed 计数字段为冻结契约，保留不动。
     pub occurrences: Vec<ScheduledTransactionOccurrence>,
 }
-
-// ---------------------------------------------------------------------------
-// FromRow implementations
-// ---------------------------------------------------------------------------
 
 impl FromRow for ScheduledTransaction {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {

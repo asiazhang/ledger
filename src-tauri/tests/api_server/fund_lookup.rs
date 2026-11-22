@@ -1,18 +1,9 @@
-//! 基金按代码查询 HTTP 端点（`GET /api/v1/funds/{code}`，issue #304 / ADR-0039 决策 2）。
-//!
-//! 只断言外部行为：命中返回名称/最新净值/净值日期（净值按 API 价格刻度万分之一
-//! 元投影；fund_class 已弃用恒空串，ADR-0130 决策 8）、净值未公布为 null、格式
-//! 非法（非 6 位）不发起网络请求即 400、查无此码 400 中文错误、开放 API 契约自
-//! 描述覆盖。行情源访问经注入桩离线驱动（#1568 换源）。
-
 use std::collections::HashMap;
 
 use axum::http::StatusCode;
 
 use crate::common::{FundStubHit, get_json, setup_app_with_fund_stub};
 
-/// 命中表：000001 → 华夏成长混合 / 净值 1.2345 元 @ 2026-08-28。
-/// fund_class 恒空串：替代源无分类来源，桩与生产取数产物同形（#1568）。
 fn stub_hit() -> HashMap<String, FundStubHit> {
     HashMap::from([(
         "000001".to_string(),
@@ -24,10 +15,6 @@ fn stub_hit() -> HashMap<String, FundStubHit> {
         },
     )])
 }
-
-// ---------------------------------------------------------------------------
-// 命中：名称 / 类型 / 最新净值 / 净值日期（净值按万分之一元刻度投影）
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_lookup_fund_returns_name_class_nav_and_nav_date() {
@@ -72,9 +59,6 @@ async fn test_lookup_fund_with_unpublished_nav_returns_null_nav_fields() {
 
 #[tokio::test]
 async fn test_lookup_terminated_fund_returns_name_and_last_nav() {
-    // 已终止（清盘）基金经官方披露兜底命中（ADR-0039 修订 / ADR-0130 决策 2，
-    // issue #1212 / #1568）：名称与最后一期净值齐备，不再误报查无此码；
-    // 分类字段弃用，恒投影空串。
     let hits = HashMap::from([(
         "002503".to_string(),
         FundStubHit {
@@ -94,10 +78,6 @@ async fn test_lookup_terminated_fund_returns_name_and_last_nav() {
     assert_eq!(body["nav_cents"], 11_440);
     assert_eq!(body["nav_date"], "2023-09-18");
 }
-
-// ---------------------------------------------------------------------------
-// 错误：格式非法（不发起网络请求）与查无此码，均为 400 中文错误
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_lookup_fund_with_malformed_code_rejects_without_network() {
@@ -142,10 +122,6 @@ async fn test_lookup_fund_with_unknown_code_returns_400_chinese_error() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 开放 API 契约自描述
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_openapi_doc_covers_fund_lookup_endpoint() {
     let (app, _conn, _calls) = setup_app_with_fund_stub(stub_hit());
@@ -153,8 +129,6 @@ async fn test_openapi_doc_covers_fund_lookup_endpoint() {
 
     let get_op = &doc["paths"]["/api/v1/funds/{code}"]["get"];
     assert!(get_op["summary"].is_string(), "OpenAPI 应包含基金查询端点");
-    // 端点自述为「一句话 + 指针」；nav_cents/nav_date/fund_class 语义归属
-    // FundLookup 字段级描述（issue #839 描述政策：端点教学迁入导入知识）。
     let description = get_op["description"].as_str().unwrap_or_default();
     for expected in ["6 位", "查无此码", "基金申赎"] {
         assert!(

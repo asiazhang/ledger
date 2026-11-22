@@ -1,13 +1,3 @@
-//! 投资域集中模型（#422 随域归位）：金融工具、持仓、行情价、已实现盈亏、
-//! 标的列表分页与财务自由度总览。
-//!
-//! 自全局模型目录迁入本域（#417 归属原则）；财务自由度并入为既有裁决
-//! （自由度归投资域，ADR-0048）。基金与股票的行情 DTO（issue #693）随 #422 Q11
-//! 归属修正迁入本域后，又随 ADR-0103 收口为行情接入接缝的**统一报价载荷**
-//! [`super::quote::Quote`]（深层统一：不再有嵌套的通道专属载荷），本文件不再
-//! 承载行情 DTO。全部类型经 `investment` 域路径逐类型再导出，消费方经域路径
-//! 显式 import，禁止 glob。
-
 use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, ValueRef};
 use serde::{Deserialize, Serialize};
 use utoipa::openapi::{ObjectBuilder, RefOr, Schema, Type};
@@ -20,23 +10,9 @@ use ledger_infra::closed_set::closed_set;
 use ledger_infra::db::query::FromRow;
 use ledger_transaction::amount::TransactionKind;
 
-/// 来源词表「人工」标记（issue #1587 单点声明）：字典侧（`instruments.source`）
-/// 新建行一律取本值、来源随行终身不变（ADR-0036 决策 2）；汇率与价格侧
-/// （`exchange_rates` / `market_prices` / `price_history` 的 `source`）人工录入
-/// 行同样记本值（ADR-0036 / ADR-0130 决策 7）。两侧同词表而语义正交（见投资域
-/// 词汇表「字典来源」），「人工」是唯一跨实体共用值——投资域内它的全部判定
-/// （自动写入的人工行保护、自建标的的删除准入）与构造一律引用本常量，不写
-/// 裸字面量（钉词表取值的测试断言/夹具除外）。
 pub const MANUAL_SOURCE: &str = "manual";
 
 closed_set! {
-/// 金融工具类型闭集（与 `instruments.instrument_type` 的 CHECK 约束（V002）
-/// 一一对应）。五份表示（enum / `ALL` / `as_str` / `parse` / `Display`）由
-/// `closed_set!` 宏同体派生（ADR-0108）：字符串字面量每变体只出现一次，
-/// 漏登/漏臂漂移不可表达；随 ADR-0102 既定形态收口，serde 由
-/// `rename_all = "snake_case"` derive（与 `Display`/`FromStr` 平行的第二套
-/// 字符串面、漂移无守门）改为手写 impl 骑行 `as_str`/`parse`（wire 形状
-/// 逐字不变：5 变体全单词，`snake_case` 展开与 `as_str` 同形）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstrumentType {
     Stock => "stock",
@@ -49,10 +25,6 @@ err_label = "金融工具类型",
 err_code = "instrument.type-unknown",
 }
 
-// serde：以与 `instruments.instrument_type` 同形的小写字符串序列化（wire 格式
-// 与 `rename_all = "snake_case"` 时代的 JSON 形状逐字一致）；反序列化复用
-// [`InstrumentType::parse`]，未知值报错文案与 parse 同源（serde 包装后附位置
-// 信息）。先例：[`ledger_transaction::TransactionKind`]。
 impl Serialize for InstrumentType {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
@@ -72,9 +44,6 @@ impl<'de> Deserialize<'de> for InstrumentType {
     }
 }
 
-// OpenAPI（utoipa）：闭集枚举以小写字符串枚举值入文档，与 wire 格式一致
-// （先例：`TransactionKind`，内联 schema，消费方字段直接嵌入、无需注册组件；
-// 枚举值由 `closed_set!` 宏生成的 [`InstrumentType::ALL`] 同源驱动）。
 impl PartialSchema for InstrumentType {
     fn schema() -> RefOr<Schema> {
         RefOr::T(Schema::Object(
@@ -116,16 +85,13 @@ pub struct Instrument {
     pub updated_at: String,
     pub version: i64,
     pub device_id: String,
-    /// 字典条目来源（自建标的，ADR-0036 决策 2）：'manual' 手动 | 历史同步行保留原值，
-    /// 与价格侧 source 语义正交；来源随行终身不变（upsert/同步均不改写）。
+    #[doc = "字典条目来源（自建标的，ADR-0036 决策 2）：'manual' 手动 | 历史同步行保留原值，与价格侧 source 语义正交；来源随行终身不变（upsert/同步均不改写）。"]
     pub source: String,
-    /// 最新市场价格（万分之一元，0.0001 元，ADR-0038 价格刻度），同步来源；无行情时为空。
+    #[doc = "最新市场价格（万分之一元，0.0001 元，ADR-0038 价格刻度），同步来源；无行情时为空。"]
     pub price_cents: Option<i64>,
-    /// 是否持有该标的（有当前持仓批次 remaining_quantity > 0，派生自 security_lots）。
+    #[doc = "是否持有该标的（有当前持仓批次 remaining_quantity > 0，派生自 security_lots）。"]
     pub invested: bool,
-    /// 价格写入通道（派生事实，不落库，issue #1060）：后端按类型 × 市场 × 代码
-    /// 单点派生（见 [`super::channel`]），前端据此开放录价入口与展示价格来源，
-    /// 不再自行按类型与市场推断。
+    #[doc = "价格写入通道（派生事实，不落库，issue #1060）：后端按类型 × 市场 × 代码单点派生（见 [`super::channel`]），前端据此开放录价入口与展示价格来源，不再自行按类型与市场推断。"]
     pub price_channel: PriceChannel,
 }
 
@@ -139,114 +105,65 @@ pub struct InstrumentInput {
     pub market: Option<String>,
 }
 
-/// 标的列表查询过滤条件（服务端分页 + 搜索）。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InstrumentListFilter {
-    /// 对 symbol / name 的大小写不敏感子串匹配。
     pub search: Option<String>,
-    /// 交易市场精确匹配（sh / sz / hk / unknown）。
     pub market: Option<String>,
-    /// 标的类型过滤（stock/fund/bond/etf/other）：同码异类型消歧用（issue #294）。
     #[serde(rename = "type")]
     pub kind: Option<InstrumentType>,
-    /// 只看持仓标的：仅返回有当前持仓（remaining_quantity > 0）的标的。
     pub only_invested: Option<bool>,
-    /// 页码，从 1 开始，默认 1。
     pub page: Option<usize>,
-    /// 每页条数，默认 50，上限 500。
     pub page_size: Option<usize>,
-    /// 焦点定位（issue #1907，读契约只增）：给出标的 id 时返回该 id 在当前
-    /// 过滤与排序下所在页（`anchor_page`），行集切到该页——来源跳转落标的页签
-    /// 的分页定位接缝。id 不在结果集内时 `anchor_page` 为空、按普通页码查询。
     pub anchor_id: Option<String>,
 }
 
-/// 标的列表分页结果。
 #[derive(Debug, Serialize, ToSchema)]
+#[schema(description = "标的列表分页结果。")]
 pub struct InstrumentListResult {
     pub items: Vec<Instrument>,
-    /// 满足过滤条件的总条数（用于分页条）。
+    #[doc = "满足过滤条件的总条数（用于分页条）。"]
     pub total: i64,
-    /// 焦点定位所在页（issue #1907，读投影只增字段）：仅 `anchor_id` 命中结果集
-    /// 时携带（1 起）；缺省不序列化，旧消费方零破坏。
+    #[doc = "焦点定位所在页（issue #1907，读投影只增字段）：仅 `anchor_id` 命中结果集时携带（1 起）；缺省不序列化，旧消费方零破坏。"]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor_page: Option<usize>,
 }
 
-/// 按代码即拉添加基金的结果（issue #301 / ADR-0038 决策 1）：标的行落库 +
-/// 现价写入状态。名称来自数据源权威数据（新浪/官方披露，#1568 换源）；
-/// 未取到净值时仅建标的、不落现价（`price_written=false`，IPC 层据此不广播
-/// 价格失效信号）。
 #[derive(Debug, Serialize)]
 pub struct AddFundResult {
     pub instrument_id: String,
     pub symbol: String,
-    /// 数据源权威名称（已回填标的行）。
     pub name: String,
-    /// 已弃用：基金分类在替代源无来源，恒返回空串（ADR-0130 决策 8；
-    /// 字段保留为已发布契约的一部分，展示层可不渲染）。
     pub fund_class: String,
-    /// 最新单位净值（万分之一元，ADR-0038 价格刻度）；未取到为 None。
     pub nav_cents: Option<i64>,
-    /// 净值日期（ISO 日期，兼任净值同步水位）；未取到为 None。
     pub nav_date: Option<String>,
-    /// 是否落了现价缓存（价格失效信号的广播判定依据，ADR-0031：零变化不广播）。
     pub price_written: bool,
 }
 
-/// 「添加投资标的」股票侧（沪/深/港/美股通道）按代码添加的结果（issue #697 /
-/// ADR-0081）：标的行落库 + 识别回显投影——数据源权威名称、自动识别的类型
-/// （行情命中 → stock、类型特征 → etf）、精确市场（美股为行情自报的交易所
-/// 归属）与最新价（万分之一元）。场外基金通道返回既有 [`AddFundResult`]。
 #[derive(Debug, Serialize)]
 pub struct AddStockInstrumentResult {
     pub instrument_id: String,
-    /// 归一化代码（港股左补零至 5 位、美股大写）。
     pub symbol: String,
-    /// 数据源权威名称（已回填标的行）。
     pub name: String,
-    /// 自动识别的类型（stock / etf）。
     #[serde(rename = "type")]
     pub kind: InstrumentType,
-    /// 精确市场（sh / sz / hk / nasdaq / nyse / amex）。
     pub market: String,
-    /// 报价币种（按市场推导：沪深→CNY、港→HKD、美股→USD）。
     pub currency_code: String,
-    /// 最新价（万分之一元，ADR-0038 价格刻度）；停牌/无有效报价为 None。
     pub price_cents: Option<i64>,
-    /// 价格日期（ISO 日期）；无有效时间戳为 None。
     pub price_date: Option<String>,
-    /// 是否落了现价缓存（价格失效信号的广播判定依据，同 [`AddFundResult`]）。
     pub price_written: bool,
 }
 
-/// 交易买卖明细（issue #180）：一笔 buy/sell 交易在 `security_transactions` 扩展表
-/// 中的投影（核心 `transactions` 行不含投资字段，见 ADR-0003 核心表 + 扩展表），
-/// 供投资表单编辑模式回填标的/数量/价格/费用。`symbol`/`instrument_name` 为
-/// JOIN `instruments` 带出的展示字段，保证回填后标的选择框可直接显示标的而非裸 id。
 #[derive(Debug, Serialize, Clone)]
 pub struct TransactionTrade {
     pub instrument_id: String,
     pub symbol: String,
     pub instrument_name: Option<String>,
-    /// 标的类型闭集字面量（fund/stock/bond/etf/other）：前端表单据此切换录入权威
-    /// 形态（基金 = 金额 + 份额必填、单价反算；其余 = 数量 + 单价，issue #302）。
     pub instrument_type: String,
     pub quantity: f64,
     pub price_cents: i64,
     pub fee_cents: Option<i64>,
 }
 
-/// 基金转换两腿明细（ADR-0099 / issue #979）：一笔 `convert` 交易在
-/// `security_transactions` 扩展表中的投影（两腿同记录），供转换表单编辑模式回填。
-///
-/// `out_*` 为转出腿（转出标的恒为 `instrument_id` / `quantity`）、`in_*` 为转入腿
-/// （`to_instrument_id` / `to_quantity`）；两侧金额是确认单权威（`out_amount_cents` /
-/// `in_amount_cents`），两侧单价由前端按金额 ÷ 份额反算展示（金额权威、单价反算，
-/// 与场外基金 buy/sell 同款，ADR-0038），故不随投影冗余携带。`carried_cost_cents`
-/// 是行金额锚点（服务端按 FIFO 消耗算定的结转成本，非确认单金额）。
-/// `symbol` / `instrument_name` 为 JOIN `instruments` 带出的展示字段，保证回填后
-/// 标的选择框可直接显示标的而非裸 id。
 #[derive(Debug, Serialize, Clone)]
 pub struct TransactionConvert {
     pub out_instrument_id: String,
@@ -259,11 +176,8 @@ pub struct TransactionConvert {
     pub in_instrument_name: Option<String>,
     pub in_quantity: f64,
     pub in_amount_cents: i64,
-    /// 手续费（整数分）：如实记录，不进支出口径、不摊入持仓成本。
     pub fee_cents: i64,
-    /// 结转成本（分）= 行金额锚点（转入批次总成本），审计展示用。
     pub carried_cost_cents: i64,
-    /// 记账币种（行币种）。
     pub currency_code: String,
 }
 
@@ -287,19 +201,11 @@ impl FromRow for TransactionConvert {
     }
 }
 
-/// 份额调整明细（ADR-0106 决策 1 / issue #1052）：一笔 `split` 交易在
-/// `security_transactions` 扩展表中的投影（`quantity` = 带符号份额增量 Δ、
-/// `price_cents` 留 NULL），供交易列表「只读详情」呈现标的与份额变动。
-/// `symbol` / `instrument_name` 为 JOIN `instruments` 带出的展示字段。
-///
-/// Δ 有符号：`+` = 折算 / 结转 / 送股，`-` = 缩股——界面按符号原样呈现，
-/// 不取绝对值、不重算方向。
 #[derive(Debug, Serialize, Clone)]
 pub struct TransactionSplit {
     pub instrument_id: String,
     pub symbol: String,
     pub instrument_name: Option<String>,
-    /// 带符号份额增量 Δ（`security_transactions.quantity`）。
     pub quantity: f64,
 }
 
@@ -328,138 +234,69 @@ impl FromRow for TransactionTrade {
     }
 }
 
-/// 投资明细列表过滤条件（ADR-0135 决策 3 / issue #1778）：四维——账户（涉及
-/// 账户语义）、标的（convert 两腿任一命中即算）、类型（投资 kind 子集多选）、
-/// 日期（双端有界）+ 服务端 offset 分页（ADR-0008）。无分类与商户维：投资 kind
-/// 编排入口即拒绝携带这两个参考数据（行为层准入），明细页签不提供。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InvestmentTransactionListFilter {
-    /// 按涉及账户过滤（账户端 ∪ 出资端）：投资账户（buy/sell/convert/split 的
-    /// 账户端）、出资账户（buy/sell 可携带，ADR-0096）与到账账户（dividend 行的
-    /// 账户端即到账账户，任意在用账户）——投资 kind 无转入侧（写入守卫恒拒）。
     pub account_id: Option<String>,
-    /// 按标的过滤：转出腿或 convert 转入腿任一命中即算（与时点持仓推算认
-    /// convert 两腿的口径对齐）。
     pub instrument_id: Option<String>,
-    /// 类型子集多选：维度内取或、与其余维度 AND 组合；空集合视为未携带
-    /// （不过滤）。通用 kind 不在行集闭包内（传了也只是空集，不报错）。
     pub kinds: Option<Vec<TransactionKind>>,
-    /// 起始日期（含），YYYY-MM-DD。
     pub from: Option<String>,
-    /// 结束日期（含），YYYY-MM-DD。
     pub to: Option<String>,
-    /// 页码，从 1 开始，默认 1。
     pub page: Option<usize>,
-    /// 每页条数，缺省返回全部（total 恒返回）；小于 1 按 1 处理。
     pub page_size: Option<usize>,
 }
 
-/// 投资明细列表分页结果（ADR-0008）。
 #[derive(Debug, Serialize)]
 pub struct InvestmentTransactionListResult {
-    /// 当前行（投资投影，公共字段恒在场、kind 专属载荷按形态携带）。
     pub items: Vec<InvestmentTransactionRow>,
-    /// 满足过滤条件的未删除投资交易总数（用于分页条）。
     pub total: i64,
 }
 
-/// 投资明细行（ADR-0135 决策 3 / issue #1778）：五种投资 kind（buy/sell/convert/
-/// split/dividend）交易行的投资投影。公共字段（行身份、行金额锚点、账户端、
-/// 归属标的）恒在场；kind 专属载荷按形态携带——buy/sell 买卖载荷、convert
-/// 转入腿、split 带符号 Δ、dividend 无专属载荷（现金腿与到账账户在公共字段）。
 #[derive(Debug, Serialize)]
 pub struct InvestmentTransactionRow {
     pub id: String,
     pub date: String,
-    /// 交易类型（投资 kind 闭集内；serde 小写字符串，与主列表同形）。
     pub kind: TransactionKind,
-    /// 行金额锚点（分）：convert 行 = 结转成本而非确认单金额——列表展示金额
-    /// 读 convert 载荷（`out_amount_cents`），与主列表同口径。
     pub amount_cents: i64,
-    /// 账户端：buy/sell/convert/split = 投资账户；dividend = 到账账户。
     pub account_id: String,
-    /// 出资账户（仅 buy/sell 可携带，ADR-0096）。
     pub funding_account_id: Option<String>,
-    /// 归属标的：buy/sell/dividend/split = 其标的；convert = 转出腿。
     pub instrument_id: String,
-    /// 归属标的代码（JOIN `instruments` 带出的展示字段）。
     pub symbol: String,
-    /// 归属标的名称（JOIN 展示字段，可空）。
     pub instrument_name: Option<String>,
-    /// 标的类型闭集字面量（fund/stock/bond/etf/other）。
     pub instrument_type: String,
-    /// 买卖载荷（buy/sell）：数量、成交单价、手续费。
     pub trade: Option<InvestmentTradeFields>,
-    /// 转换载荷（convert）：投资域专属形状——转出份额 + 转入腿与两侧确认金额
-    /// （确认单权威，列表展示金额读 `out_amount_cents`，行金额锚点是结转成本）。
-    /// 主列表转换扩展 `ledger_transaction::ConvertFields` 契约冻结不动，不在其上
-    /// 只增字段（转出份额在主列表可由公共标的地 + 行上下文推得）。
     pub convert: Option<InvestmentConvertFields>,
-    /// 份额调整载荷（split）：带符号份额增量 Δ 原样投影（不取绝对值、不重算方向）。
     pub split: Option<InvestmentSplitFields>,
-    /// 备注（弹窗族消费列，ADR-0135 决策 4 / issue #1781）：编辑回填防误抹（编辑
-    /// 提交是全字段替换，缺 note 会把原备注静默清空）与只读详情备注行呈现；
-    /// 列表呈现不读。
     pub note: Option<String>,
-    /// 记录币种（= 账户币种，ADR-0134）：编辑回填按币种小数位换算金额/费用、
-    /// dividend 只读详情金额展示的币种标注；列表呈现不读（混合币种列表不暗示同币种）。
     pub currency_code: String,
-    /// 本位币金额（分，写路径折算落定，issue #1548 / ADR-0011）：dividend 只读
-    /// 详情金额展示读它（与主列表金额列同口径单点）；列表呈现不读。
     pub amount_native_cents: i64,
-    /// 来源订单号（V035 / #1862，弹窗族消费列）：投资行（如券商回单 buy/sell）
-    /// 可携带的外部订单标识，经弹窗行适配供订单区消费（#1928 撤列表徽章）；列表呈现不读。
     pub source_order_no: Option<String>,
 }
 
-/// 买卖载荷（buy/sell 行的 kind 专属投影，issue #1778）：与编辑回填明细
-/// [`TransactionTrade`] 的差异是不重复携带标的公共字段（行上已有），费用恒
-/// 在场（buy/sell 写路径恒写）。
 #[derive(Debug, Serialize)]
 pub struct InvestmentTradeFields {
     pub quantity: f64,
-    /// 成交单价（万分之一元，ADR-0038 价格刻度）。
     pub price_cents: i64,
-    /// 手续费（整数分）。
     pub fee_cents: i64,
 }
 
-/// 转换载荷（convert 行的 kind 专属投影，issue #1778）：转出份额 + 转入腿 +
-/// 两侧确认金额。与编辑回填明细 [`TransactionConvert`] 的差异是不重复携带转出腿
-/// 标的公共字段（行上已有：公共标的地即转出腿）与结转成本 / 币种（行金额锚点
-/// 与行上下文已有）；主列表转换扩展 `ledger_transaction::ConvertFields` 契约
-/// 冻结不动，本类型是其投资域超集（多转出份额 `quantity`）。
 #[derive(Debug, Serialize)]
 pub struct InvestmentConvertFields {
-    /// 转出份额（`security_transactions.quantity`，转出腿标的即行公共标的）。
     pub quantity: f64,
-    /// 转入腿标的 id。
     pub to_instrument_id: String,
-    /// 转入腿标的代码（JOIN `instruments` 带出的展示字段）。
     pub to_symbol: String,
-    /// 转入腿份额。
     pub to_quantity: f64,
-    /// 转出金额（确认单口径，整数分）。
     pub out_amount_cents: i64,
-    /// 转入金额（确认单口径，整数分）。
     pub in_amount_cents: i64,
 }
 
-/// 份额调整载荷（split 行的 kind 专属投影，issue #1778）。
 #[derive(Debug, Serialize)]
 pub struct InvestmentSplitFields {
-    /// 带符号份额增量 Δ（`security_transactions.quantity`）：`+` = 折算 / 结转 /
-    /// 送股，`−` = 缩股——界面按符号原样呈现。
     pub delta_quantity: f64,
 }
 
 impl FromRow for InvestmentTransactionRow {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         let kind: TransactionKind = row.get(1)?;
-        // kind 专属载荷按形态装配：各列在对应 kind 的扩展行里恒在位（buy/sell
-        // 的数量/单价、convert 的两腿金额由写路径落定），NULL 形态只属其它 kind
-        // ——载荷列 NULL 即行不变量破坏，显式报错（带 kind 与字段名定位）不静默
-        // 回退零值（回退把坏行伪装成好行，问题延后到展示层难追因）。
         let (trade, convert, split) = match kind {
             TransactionKind::Buy | TransactionKind::Sell => (
                 Some(InvestmentTradeFields {
@@ -489,8 +326,6 @@ impl FromRow for InvestmentTransactionRow {
                     delta_quantity: require_payload_field(row, 10, kind, "quantity")?,
                 }),
             ),
-            // dividend 无 kind 专属载荷；通用 kind 不入行集闭包（JOIN + kind
-            // 闭集），防御性空载荷（穷尽分派，新增 kind 编译期报错）。
             TransactionKind::Dividend
             | TransactionKind::Income
             | TransactionKind::Expense
@@ -511,7 +346,6 @@ impl FromRow for InvestmentTransactionRow {
             trade,
             convert,
             split,
-            // 弹窗族消费列（尾段追加列，列序见 ledger_tab ROW_COLUMNS 注记）。
             note: row.get(18)?,
             currency_code: row.get(19)?,
             amount_native_cents: row.get(20)?,
@@ -520,10 +354,6 @@ impl FromRow for InvestmentTransactionRow {
     }
 }
 
-/// kind 专属载荷列取值（NULL 即报错）：对应 kind 的扩展行各载荷列由写路径恒
-/// 落定（buy/sell 的数量/单价/手续费、convert 的两腿金额、split 的 Δ），NULL
-/// 意味着行不变量被破坏——显式报错（消息带 kind 与字段名定位）不静默回退零值
-/// （回退把坏行伪装成好行，错误延后到展示层难追因）。
 fn require_payload_field<T: rusqlite::types::FromSql>(
     row: &rusqlite::Row,
     idx: usize,
@@ -544,25 +374,15 @@ fn require_payload_field<T: rusqlite::types::FromSql>(
     })
 }
 
-/// 交易列表来源反查投影（spec #704 / issue #709，词汇表「来源列」）：按生成
-/// 交易 id 反查证券交易记录 JOIN 标的字典的最小行——标的 id（来源实体 id）+
-/// 代码与名称（来源列展示名原料），供核心交易域按页填充来源列。
 #[derive(Debug, Clone)]
 pub struct InstrumentSourceDisplay {
-    /// 生成交易 id（security_transactions 主键，一交易至多一行）：调用方按它
-    /// 把标的归位到交易行。
     pub transaction_id: String,
-    /// 标的 id（来源实体 id，走势页签 focus 消费按它解析选中）。
     pub instrument_id: String,
-    /// 标的代码（展示名原料，NOT NULL 恒在场）。
     pub symbol: String,
-    /// 标的名称（可空，展示名原料）。
     pub name: Option<String>,
 }
 
 impl InstrumentSourceDisplay {
-    /// 来源列展示名（标的展示名惯例，与标的页签列表标签同源）：代码 + 名称空格连接，无名称（含空串）
-    /// 退化为裸代码——代码 NOT NULL 保证展示名恒非空、链接恒可读。
     pub fn display_label(&self) -> String {
         match self.name.as_deref() {
             Some(name) if !name.is_empty() => format!("{} {}", self.symbol, name),
@@ -592,17 +412,10 @@ pub struct Holding {
     pub cost_currency_code: String,
     pub latest_price_cents: Option<i64>,
     pub latest_price_currency_code: Option<String>,
-    /// 净值日期（透传 market_prices.nav_date，#303）：基金现价（= 最新公布
-    /// 单位净值）携带，持仓可见现价对应哪天的净值；股票类恒 None。
     pub latest_nav_date: Option<String>,
     pub market_value_cents: Option<i64>,
     pub unrealized_pnl_cents: Option<i64>,
-    /// 折全局默认币种的市值（当期汇率，issue #1797）：供持仓页签合计三卡与首页
-    /// 投资概览卡出折本位币单值。缺现价或缺价格币→账户币汇率（账户币值本身为
-    /// NULL）、或缺账户币→本位币汇率（逐行软折算失败）时为 None——行级空值，
-    /// 由展示面显式呈现；命令不因单行缺料失败。
     pub native_market_value_cents: Option<i64>,
-    /// 折全局默认币种的未实现盈亏（当期汇率，issue #1797）；空值语义同 [`Holding::native_market_value_cents`]。
     pub native_unrealized_pnl_cents: Option<i64>,
     pub updated_at: String,
 }
@@ -614,8 +427,6 @@ pub struct MarketPrice {
     pub price_cents: i64,
     pub currency_code: String,
     pub priced_at: String,
-    /// 净值日期：场外基金现价（= 最新公布单位净值）携带，兼任净值同步水位
-    /// （ADR-0038）；股票类现价无净值语义，恒为 None。
     pub nav_date: Option<String>,
     pub source: Option<String>,
     pub created_at: String,
@@ -633,24 +444,13 @@ pub struct MarketPriceInput {
     pub source: Option<String>,
 }
 
-/// 手动报价入参（issue #291 / ADR-0036）：标的 id + 日期（ISO YYYY-MM-DD）+ 价格
-/// （万分之一元，ADR-0038 价格刻度）。后端命令不设「同步覆盖不到」守卫——
-/// 录价入口收口在 UI 侧（ADR-0036 决策 1 修订）。
 #[derive(Debug, Deserialize)]
 pub struct ManualPriceInput {
     pub instrument_id: String,
-    /// 报价对应的交易日（ISO YYYY-MM-DD）。
     pub date: String,
-    /// 单价（万分之一元，价格刻度见 ADR-0038）。
     pub price_cents: i64,
 }
 
-/// 手动报价结果（issue #291）：两个落点各自的实际写入情况。
-/// `history_written` = 价格历史周采样落库；`current_price_written` = 现价缓存
-/// upsert（报价不早于最新价格点时写入；回填旧价为 false——现价是 PriceHistory
-/// 最新一条的即时映像，回填不改变现价）。前端据此区分回执文案；价格失效信号
-/// 证据经 [`ManualPriceResult::any_written`] 归一化，发射判定单点在 `signals`
-/// 映射（ADR-0044 / issue #333）。
 #[derive(Debug, Serialize)]
 pub struct ManualPriceResult {
     pub history_written: bool,
@@ -658,43 +458,23 @@ pub struct ManualPriceResult {
 }
 
 impl ManualPriceResult {
-    /// 「实际写入任一落点」：价格失效信号证据（`WriteEvidence::PriceWritten`
-    /// 载荷，ADR-0044）的域内归一化——任一落点实际写入即价格数据已变更。
-    /// 「是否发信号」的判定单点在 `signals_for` 映射行，本方法只做结果 →
-    /// 证据的形状翻译（增量同步结果 `written` 字段同款先例）。
     pub fn any_written(&self) -> bool {
         self.history_written || self.current_price_written
     }
 }
 
-/// 已实现盈亏汇总（ADR-0107 / #1845 单值翻案）：盈亏页按年 / 按账户两张单值表。
-/// 逐匹配「卖出明细」已退役（决策 1）；按币种分组的 total / by_instrument 字段
-/// 已随单值翻案删除（ADR-0107 修订注记，2026-09-27）——每行一个折本位币的
-/// 已实现收益单值（行标识 + 主值 + 两腿拆解 + native_currency）。
 #[derive(Debug, Serialize)]
 pub struct RealizedPnlSummary {
     pub by_year: Vec<YearPnl>,
     pub by_account: Vec<AccountPnl>,
 }
 
-/// 按币种分组的累计收益小计（issue #1077 / 词汇表「累计收益（CumulativePnl）」）：
-/// 未实现盈亏（Holding）+ 已实现盈亏（RealizedPnl）+ 累计分红（现金分红 dividend）
-/// 三腿相加，按账户币种独立成组、不做跨币种折算（同 ADR-0107 决策 6 的持仓合计口径）。
-///
-/// **空值语义采 Holding 侧**：缺价 / 缺汇率的持仓其未实现腿为空值，不计入本组、
-/// 不以零计入（与持仓视图合计既有的「跳过空值」语义一致）；已实现腿来自平仓匹配，
-/// 不受当前持仓有无行情影响。某币种两腿皆空时该组不出现（由调用方渲染为空态）。
 #[derive(Debug, Clone, Serialize)]
 pub struct CurrencyCumulativePnl {
     pub currency_code: String,
     pub cumulative_pnl_cents: i64,
 }
 
-/// 按币种分组的持仓合计行（issue #1196 / ADR-0114 跨账本汇总的域读投影）：
-/// 口径 = 持仓页签合计的既有形态（issue #902 / ADR-0107 同款「按币种分组、不跨币种
-/// 折算」）——金额为账户本位币（`v_holdings` 市值/未实现盈亏列），软删账户由视图
-/// 内建排除，隐藏账户照常计入（Holding 口径，issue #217 定案 Q2）；缺价/缺汇率的
-/// 空值跳过、不以零计入（两列皆空的币种组不出现，同累计收益的空组语义）。
 #[derive(Debug, Clone, Serialize)]
 pub struct CurrencyHoldingTotals {
     pub currency_code: String,
@@ -702,53 +482,28 @@ pub struct CurrencyHoldingTotals {
     pub unrealized_pnl_cents: Option<i64>,
 }
 
-/// 累计收益·折本位币单值（issue #1797）：三腿（未实现 + 已实现 + 分红）逐行
-/// 按当期汇率折全局默认币种后求和的读投影——持仓页签合计卡与首页投资概览卡的
-/// 累计收益消费面。隐藏账户照常计入（持仓口径，与投资概览页签
-/// `investment_overview` 的「排除」构成差异轴）；缺折算汇率码化上抛
-/// （`fx.rate-missing`，不静默给半截数字），缺价持仓的未实现腿按空值跳过。
 #[derive(Debug, Serialize)]
 pub struct CumulativePnlNativeTotal {
-    /// 三腿逐行折本位币后的合计（分）。
     pub total_cents: i64,
-    /// 折算基准币种（全局默认币种），供展示面标注口径。
     pub native_currency: String,
 }
 
-/// 按年分组的已实现收益单值行（ADR-0129 两腿拆解沿用；#1845 起折本位币单值）：
-/// 已实现盈亏（卖出匹配）与现金分红（dividend 行）两腿各自按事件周汇率折全局
-/// 默认币种（卖出匹配按卖出周、分红按到账周；事件周缺失 ±8 周内就近兜底）
-/// 后相加，合计即词汇表「已实现收益（RealizedGain）」；两腿各自口径逐位不变
-/// （ADR-0107 / ADR-0109 决策 2），合计在域内相加、前端不持算术（ADR-0129 决策 4）。
-/// 任一腿兜底窗口内无点 → 该腿缺料、整行显式「无法计算」（三项同为 None），
-/// 绝不以零计入、不给半截数字；币对零历史整命令报 `fx.rate-missing`。
 #[derive(Debug, Serialize)]
 pub struct YearPnl {
     pub year: String,
-    /// 折算基准币种（全局默认币种），供页面标注与格式化。
     pub native_currency: String,
-    /// 已实现盈亏腿：FIFO 卖出匹配、已扣卖出手续费、不含分红，折本位币；
-    /// 缺料（兜底窗口内无汇率点）为 None。
     pub realized_pnl_cents: Option<i64>,
-    /// 现金分红腿：归属标的的现金收入，按交易行日期归年，折本位币；缺料为 None。
     pub dividend_cents: Option<i64>,
-    /// 主值 = 两腿之和（不含浮动盈亏）；任一腿缺料即 None（行显式「无法计算」）。
     pub realized_gain_cents: Option<i64>,
 }
 
-/// 按账户分组的已实现收益单值行（ADR-0129）：列口径同 [`YearPnl`]，按账户聚合
-/// （#1845 起折本位币单值，缺料与零历史语义同 [`YearPnl`]）。
 #[derive(Debug, Serialize)]
 pub struct AccountPnl {
     pub account_id: String,
     pub account_name: String,
-    /// 折算基准币种（全局默认币种），供页面标注与格式化。
     pub native_currency: String,
-    /// 已实现盈亏腿（折本位币）；缺料为 None。
     pub realized_pnl_cents: Option<i64>,
-    /// 现金分红腿（折本位币）；缺料为 None。
     pub dividend_cents: Option<i64>,
-    /// 主值 = 两腿之和；任一腿缺料即 None（行显式「无法计算」）。
     pub realized_gain_cents: Option<i64>,
 }
 
@@ -772,8 +527,6 @@ impl FromRow for Holding {
             latest_nav_date: row.get(8)?,
             market_value_cents: row.get(9)?,
             unrealized_pnl_cents: row.get(10)?,
-            // 本位币列由 list_holdings 逐行软折算后回填（FromRow 只投影视图列）；
-            // 其余 Holding 构造面（若有）缺省 None，不伪造折算结果。
             native_market_value_cents: None,
             native_unrealized_pnl_cents: None,
             updated_at: row.get(11)?,
@@ -820,13 +573,7 @@ impl FromRow for CurrencyHoldingTotals {
 
 impl FromRow for Instrument {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
-        // 派生事实先行（issue #1060）：价格通道由类型 × 市场 × 代码 + 恒定单位
-        // 价格单点派生（ADR-0126），不进 SQL 投影——SQL 无法引用 Rust 判定，
-        // 行映射处消费域单点。恒定单位价格是判定输入不随投影输出（用户可见
-        // 口径是价格来源列，见 `price_channel`）。
         let kind: InstrumentType = row.get(2)?;
-        // DB 读边界 parse 一次（市场闭集类型，issue #1673）；投影字段输出闭集
-        // 字符串（wire 形状不变）。
         let market: Market = row.get(5)?;
         let symbol: String = row.get(1)?;
         let constant_unit_price: Option<i64> = row.get(13)?;
@@ -851,96 +598,44 @@ impl FromRow for Instrument {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 走势查询（issue #138 / spec #135 / ADR-0019：PortfolioValueTrend）
-// ---------------------------------------------------------------------------
-
-/// 走势查询区间：可选起止 ISO 8601 日期，`None` 表示该侧不设界。
-/// 前端预设区间（1 月 / 3 月 / 1 年 / 3 年 / 5 年 / 全部）换算成起止日期传入。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct TrendRange {
-    /// 起始日期（含），ISO 8601。
     pub start_date: Option<String>,
-    /// 截止日期（含），ISO 8601。
     pub end_date: Option<String>,
 }
 
-/// 组合走势采样点：该周各持仓标的「持有数量 × 周线价格」折算到本位币后的合计。
 #[derive(Debug, Serialize)]
 pub struct PortfolioTrendPoint {
-    /// 所属 ISO 周的周一（周点 x 坐标，按周连续、缺口连点跨越），ISO 8601 日期。
     pub date: String,
-    /// 该周组合总市值（分，本位币）。
     pub market_value_cents: i64,
 }
 
-/// 投资资产走势（PortfolioValueTrend）：组合市值周点曲线。
-/// `points` 为空即无任何历史数据的空态（前端据此渲染引导文案）。
 #[derive(Debug, Serialize)]
 pub struct PortfolioValueTrend {
-    /// 折算基准（本位币）。
     pub currency_code: String,
     pub points: Vec<PortfolioTrendPoint>,
-    /// 补全状态（ADR-0122 决策 5 / issue #1377，读投影只增字段）：仅当采样点
-    /// 为空且库内存在「有价格写入通道而没有任何历史序列」的标的时携带（聚合
-    /// 三态）；其余场景缺省不序列化。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backfill: Option<TrendBackfillStatus>,
 }
 
-// ---------------------------------------------------------------------------
-// 财务自由度（issue #343 / ADR-0048；#422 自全局模型目录并入本域）
-// ---------------------------------------------------------------------------
-
-/// `financial_freedom` 命令返回的财务自由度总览（本位币口径，金额单位：分）。
-///
-/// 自由度 = 可投资资产 × 3% 安全提取率 ÷ 年度预算总额 × 100%（口径取舍见
-/// docs/adr/0048-financial-freedom-ratio.md）。实时计算不落库；未设预算时
-/// 分母为零、ratio 与 coverage_years 均为 0（占位引导在展示层，不回退实际支出）。
 #[derive(Debug, Clone, Serialize)]
 pub struct FinancialFreedomOverview {
-    /// 自由度百分比（一位小数）
     pub ratio: f64,
-    /// 分子：可投资资产合计（本位币，分）= Σ 折本位币持仓市值 + Σ 折本位币投资账户余额
-    /// （排除隐藏账户；未录价持仓按空值语义不计入）
     pub numerator_cents: i64,
-    /// 分母：年度预算总额（分）= Σ 月度预算 × 12 + Σ 年度预算（全部未删除，无窗口不滚动）
     pub denominator_cents: i64,
-    /// 覆盖年数（一位小数）= 分子 ÷ 分母（零分母为 0）
     pub coverage_years: f64,
-    /// 折算基准币种（全局默认币种）
     pub native_currency: String,
 }
 
-// ---------------------------------------------------------------------------
-// 投资概览（spec #1532 / issue #1536）
-// ---------------------------------------------------------------------------
-
-/// `investment_overview` 命令返回的投资概览读数（全页折本位币单值，金额单位：分）。
-///
-/// 投资页「概览」页签的唯一取数接缝：前端只装配数值，不出现第二份口径表达式
-/// （折算、两腿相加与缺价计数全在本域单点，见 [`super::overview`]）。
-/// 口径与持仓视图「按账户币种分组、不跨币种合并」的分工见 ADR-0131。
 #[derive(Debug, Clone, Serialize)]
 pub struct InvestmentOverview {
-    /// 折算基准币种（全局默认币种）——本页全部金额的币种标注来源
     pub native_currency: String,
-    /// 可投资资产合计（分）= 投资账户现金腿 + 持仓市值腿
     pub investable_assets_cents: i64,
-    /// 可投资资产·投资账户现金腿（分）：投资账户余额折本位币（排除隐藏账户）
     pub investment_cash_cents: i64,
-    /// 可投资资产·持仓市值腿（分）：Σ 折本位币持仓市值（排除隐藏账户）
     pub holdings_market_value_cents: i64,
-    /// 投资合计·总市值（分）：Σ 折本位币持仓市值，缺价持仓跳过（排除隐藏账户）
     pub total_market_value_cents: i64,
-    /// 投资合计·持仓收益（未实现盈亏，分）：Σ 折本位币未实现盈亏，缺价持仓跳过
-    /// （排除隐藏账户）
     pub unrealized_pnl_cents: i64,
-    /// 投资合计·累计收益（分）= 持仓收益 + 已实现盈亏 + 累计分红，三腿均折本位币
-    /// （排除隐藏账户，缺价持仓在未实现腿按空值语义跳过）
     pub cumulative_pnl_cents: i64,
-    /// 未计入合计的持仓数：缺现价（或缺价格币→账户币汇率）按空值语义跳过的行数
     pub missing_price_holding_count: i64,
-    /// 账本内是否存在未删除的投资账户：否时展示层给「还没有投资账户」引导句
     pub has_investment_account: bool,
 }

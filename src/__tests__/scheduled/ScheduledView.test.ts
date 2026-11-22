@@ -10,15 +10,11 @@ import ScheduledView from "@/views/ScheduledView.vue";
 import { routes, router } from "@/router";
 import type { SubscriptionSpendOverview } from "@ledger/types";
 
-// 订阅花费页签内嵌 SubscriptionSpendPanel 的 <Bar> 走共享桩（issue #1335，先例 #160、
-// #378）：jsdom 无 2D context，真实 chart.js 取不到 canvas 会打「Failed to create
-// chart」error 输出污染 stderr；本测试只断言页签结构，不验证绘制。
 vi.mock("vue-chartjs", async () => {
   const { BarChartStub } = await import("../line-chart-stub");
   return { Bar: BarChartStub };
 });
 
-/** 订阅花费总览空数据（子页签挂载即拉取）。 */
 const emptySpendOverview: SubscriptionSpendOverview = {
   native_currency: "CNY",
   this_month_native_cents: 0,
@@ -29,10 +25,6 @@ const emptySpendOverview: SubscriptionSpendOverview = {
   projected_year_native_cents: 0,
 };
 
-/** 壳层布线：只关心页签结构，子页签的 invoke 一律给最小空数据。
- * 参考字典五命令不在此枚举——桩层规范夹具兜底（页签结构不渲染字典内容）。
- * `overrides` 供 describe 级增量命令展开合并重走唯一接缝
- * （持久叠加桩已禁，守门规则 3；issue #750）。 */
 function wireShellDefaults(overrides: Record<string, InvokeSeamOverride> = {}) {
   return wireInvokeSeam({
     defaults: {
@@ -43,7 +35,6 @@ function wireShellDefaults(overrides: Record<string, InvokeSeamOverride> = {}) {
   });
 }
 
-/** memory router：与真实路由表同构（routes 单一来源复用，避免双份漂移）。 */
 async function makeRouter(initialPath = "/scheduled") {
   const r = createRouter({ history: createMemoryHistory(), routes });
   await r.push(initialPath);
@@ -65,7 +56,6 @@ beforeEach(() => {
 describe("ScheduledView 「定时」视图三页签（issue #202）", () => {
   it("默认激活订阅页签：无 tab query 时渲染订阅清单内容", async () => {
     const { wrapper } = await mountView();
-    // 订阅页签内容来自迁入的订阅页（清单卡片 + 新建按钮）
     expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(true);
     expect(wrapper.text()).toContain("订阅清单");
   });
@@ -85,7 +75,6 @@ describe("ScheduledView 「定时」视图三页签（issue #202）", () => {
       .trigger("click");
     await flushPromises();
     expect(r.currentRoute.value.query.tab).toBe("installments");
-    // 分期页签渲染分期面板（InstallmentsPane），订阅内容不可见
     expect(wrapper.text()).toContain("分期清单");
     expect(wrapper.find('[data-testid="inst-create-open"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(false);
@@ -99,7 +88,6 @@ describe("ScheduledView 「定时」视图三页签（issue #202）", () => {
       .trigger("click");
     await flushPromises();
     expect(r.currentRoute.value.query.tab).toBe("transfers");
-    // 定时转账页签为端到端竖切（issue #203）：显示清单卡片 + 新建入口
     expect(wrapper.text()).toContain("定时转账清单");
     expect(wrapper.find('[data-testid="transfer-create-open"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(false);
@@ -154,15 +142,8 @@ describe("内嵌态（issue #473：组内「更多」容器装载，页签退内
   });
 });
 
-// ---------------------------------------------------------------------------
-// 计划来源落点（spec #704 / issue #707，词汇表「来源列」「实体定位参数（focus 参数）」）：
-// 来源列点击计划 → 定时视图对应形态页签 + 自动打开计划详情弹窗（弹窗按 id
-// 独立取数，不受清单状态过滤影响——已取消计划照常可开）。
-// ---------------------------------------------------------------------------
-
 import type { ScheduledTransactionDetail } from "@ledger/types";
 
-/** 已取消订阅计划详情（弹窗取数桩；展示名 = 计划名 = 备注）。 */
 function planDetailOf(
   id: string,
   overrides: Partial<ScheduledTransactionDetail["core"]> = {},
@@ -198,7 +179,6 @@ function planDetailOf(
 
 describe("计划来源落点（issue #707）：focus 读一次 → 形态页签 + 计划详情弹窗", () => {
   beforeEach(() => {
-    // 壳层表展开合并本组特有覆写，重走唯一接缝（持久叠加桩已禁，守门规则 3）
     wireShellDefaults({
       get_scheduled_transaction_detail: (args) => Promise.resolve(planDetailOf(String(args?.id))),
     });
@@ -206,16 +186,13 @@ describe("计划来源落点（issue #707）：focus 读一次 → 形态页签 
 
   it("独立路由：focus + 形态页签（query.tab）落对应页签并自动打开计划详情弹窗", async () => {
     const { wrapper } = await mountView("/scheduled?tab=installments&focus=plan-inst-1");
-    // 形态页签正确（分期），订阅页签内容不在场
     expect(wrapper.find('[data-testid="inst-create-open"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(false);
-    // 计划详情弹窗按 id 自动打开（不受清单状态过滤影响）
     const detailCalls = mockInvoke.mock.calls.filter(
       (c) => c[0] === "get_scheduled_transaction_detail",
     );
     expect(detailCalls).toHaveLength(1);
     expect((detailCalls[0] as unknown[])[1]).toEqual({ id: "plan-inst-1" });
-    // 弹窗内容 teleport 到 body（AppModal 先例）：在 body 上查询
     expect(document.body.querySelector('[data-testid="occ-plan-note"]')?.textContent).toBe(
       "计划-plan-inst-1",
     );
@@ -235,7 +212,6 @@ describe("计划来源落点（issue #707）：focus 读一次 → 形态页签 
     );
     const wrapper = mount(ScheduledView, { props: { embedded: true }, global: { plugins: [r] } });
     await flushPromises();
-    // 形态页签正确（定时转账），容器 query.tab 不被内嵌页签写回（双写互踩约定）
     expect(wrapper.find('[data-testid="transfer-create-open"]').exists()).toBe(true);
     expect(r.currentRoute.value.query.tab).toBe("scheduled");
     expect(
@@ -255,7 +231,6 @@ describe("计划来源落点（issue #707）：focus 读一次 → 形态页签 
     expect(document.body.querySelector('[data-testid="occ-plan-note"]')?.textContent).toBe(
       "计划-plan-once",
     );
-    // 切内页签再切回：清单命令新增，详情命令不重放
     await wrapper
       .findAll(".n-tabs-tab")
       .find((t) => t.text() === "分期")!

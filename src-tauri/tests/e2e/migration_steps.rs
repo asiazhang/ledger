@@ -16,13 +16,9 @@ use crate::common::query_all_transactions;
 use crate::step_inputs::income_input;
 use crate::world::{ImportedRow, LedgerWorld};
 
-/// 批量导入：模拟 AI 迁移，与 HTTP 批量导入同走 `batch::TransactionBatch::run`（dedup=true）。
-/// 表格列（按表头名解析，缺失可省略）：kind | 金额 | 币种 | 账户 | 转入账户 | 日期 [| 备注 [| 商户 [| 幂等键]]]。
-/// `商户` 为商户名字符串（issue #194 AI 导入契约）：后端精确匹配复用或未命中即建。
 #[when(expr = "批量导入交易")]
 fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
     let table = step.table.as_ref().expect("批量导入步骤缺少数据表");
-    // 表头行是 rows[0]，据此建立列名 → 列号映射，未出现的列缺省为空。
     let headers = &table.rows[0];
     let col = |name: &str| headers.iter().position(|h| h == name);
     let get = |row: &[String], name: &str| {
@@ -53,7 +49,6 @@ fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
         })
         .collect();
     let inputs: Vec<TransactionInput> = rows.iter().map(|r| r.to_input(world)).collect();
-    // 与 HTTP 批量导入端点同形态：经连接层统一写入口（ADR-0032，issue #245）。
     let results = world_write!(world, |conn| TransactionBatch::run(conn, inputs, true))
         .expect("批量导入失败")
         .results;
@@ -62,7 +57,6 @@ fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-/// 重跑刚才的批量导入：与首次导入相同的行、相同的 dedup 语义。
 #[when(expr = "重跑刚才的批量导入")]
 fn reimport(world: &mut LedgerWorld) {
     let inputs: Vec<TransactionInput> = world
@@ -71,7 +65,6 @@ fn reimport(world: &mut LedgerWorld) {
         .iter()
         .map(|r| r.to_input(world))
         .collect();
-    // 与 HTTP 批量导入端点同形态：经连接层统一写入口（ADR-0032，issue #245）。
     let results = world_write!(world, |conn| TransactionBatch::run(conn, inputs, true))
         .expect("重跑批量导入失败")
         .results;
@@ -79,8 +72,6 @@ fn reimport(world: &mut LedgerWorld) {
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-/// 按幂等键找到对应交易并全字段替换（模拟 AI 读回后用 PUT 修改的纠错路径）。
-/// 修改金额/日期/备注但幂等键保持不变——编辑不改变导入身份，修改后重跑同批导入不产生重复。
 #[when(expr = "修改幂等键 {string} 的交易 金额 {int} 日期 {string} 备注 {string}")]
 fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: String, note: String) {
     let (id, account_id, currency_code): (String, String, String) = world_conn!(world)
@@ -100,7 +91,6 @@ fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: Stri
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-/// 删除备注为指定值的交易（软删除，与 HTTP DELETE 端点共用 `delete_transaction_internal`）。
 #[when(expr = "删除备注为 {string} 的交易")]
 fn delete_txn_by_note(world: &mut LedgerWorld, note: String) {
     let id: String = world_conn!(world)
@@ -114,7 +104,6 @@ fn delete_txn_by_note(world: &mut LedgerWorld, note: String) {
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-/// 查询全部未删除账户的实时余额（含黑洞账户），快照到 world.txn.balances。
 #[when(expr = "查询全部账户余额")]
 fn query_balances(world: &mut LedgerWorld) {
     let balances = list_account_balances_for_api(&world_conn!(world)).expect("查询账户余额失败");
@@ -124,8 +113,6 @@ fn query_balances(world: &mut LedgerWorld) {
         .collect();
 }
 
-/// 重跑导入创建账户：幂等创建（与 HTTP POST /api/v1/accounts 语义一致），
-/// 软删除后重导可重新建回。
 #[when(expr = "重跑导入创建账户 {string} 类型 {string} 币种 {string}")]
 fn reimport_create_account(world: &mut LedgerWorld, name: String, kind: String, currency: String) {
     let account_kind: AccountType = kind
@@ -146,10 +133,6 @@ fn reimport_create_account(world: &mut LedgerWorld, name: String, kind: String, 
     .expect("幂等创建账户失败");
     world.account_name_to_id.insert(name, id);
 }
-
-// ---------------------------------------------------------------------------
-// Then
-// ---------------------------------------------------------------------------
 
 #[then(expr = "读回交易 应包含 {int} 条记录")]
 fn readback_count(world: &mut LedgerWorld, expected: i64) {
@@ -205,7 +188,6 @@ fn readback_kind_amount(
     let result = list_transactions_internal(
         &world_conn!(world),
         &TransactionListFilter {
-            // 单值经集合参数（spec #1025：原单值 kind 参数已移除，BREAKING）
             kinds: Some(vec![
                 TransactionKind::parse(&kind)
                     .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
@@ -315,7 +297,6 @@ fn check_batch_results(world: &mut LedgerWorld, duplicates: i64, new: i64) {
     assert_eq!(new_count as i64, new, "新写入条数不匹配");
 }
 
-/// 校验幂等键命中的去重结果携带该笔已有 id（并确证该 id 确为库中一笔未删除交易）。
 #[then(expr = "最近一次导入的去重结果应通过幂等键返回已有 id")]
 fn check_dup_returns_existing_id(world: &mut LedgerWorld) {
     let dups: Vec<&ledger_transaction::CreateTransactionResult> = world

@@ -8,15 +8,11 @@ import GeneralSettings from "@/settings/GeneralSettings.vue";
 import { RELEASE_PAGE_URL, resetAppUpdateForTest, useAppUpdate } from "@/composables/useAppUpdate";
 import { resetAppBuildInfoForTest } from "@/settings/useAppBuildInfo";
 
-// 发布页引导走 opener 插件，测试以模块替身断言调用事实。
 const openUrl = vi.fn().mockResolvedValue(undefined);
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn((url: string) => openUrl(url)) }));
 
-/** 壳层构建元信息的契约快照（issue #1957）：「当前版本号」取它的 version，
- *  与「关于」Tab 同源——不再读前端 package.json。 */
 const BUILD_INFO = { version: "9.9.9", platform: "macos", arch: "aarch64" };
 
-/** 挂载前以指定形态完成探测（卡片分支随形态渲染）。 */
 async function mountCard(surface: "updater" | "release-page" | null) {
   if (surface !== null) {
     wireInvokeSeam({
@@ -25,7 +21,7 @@ async function mountCard(surface: "updater" | "release-page" | null) {
   } else {
     wireInvokeSeam({
       defaults: { app_build_info: BUILD_INFO },
-      overrides: { get_update_surface: () => new Promise(() => {}) }, // 悬挂 = 探测未完成
+      overrides: { get_update_surface: () => new Promise(() => {}) },
     });
   }
   const wrapper = mount(UpdateSettings);
@@ -56,9 +52,7 @@ describe("UpdateSettings.vue — updater 形态（桌面三平台完整更新面
   it("当前版本号取壳层 app_build_info（删接线即红的负向条目）", async () => {
     const wrapper = await mountCard("updater");
 
-    // 调用事实：版本不是前端 package.json 的镜像，而是经命令取数
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "app_build_info")).toBe(true);
-    // 渲染效果：屏幕上的当前版本 = 安装包版本（注入的契约快照）
     expect(wrapper.find('[data-testid="update-current-version"]').text()).toContain(
       BUILD_INFO.version,
     );
@@ -67,13 +61,11 @@ describe("UpdateSettings.vue — updater 形态（桌面三平台完整更新面
   it("自动检查开关新装默认开启；切换即持久化并推送后端镜像（双断言）", async () => {
     const wrapper = await mountCard("updater");
     const sw = button(wrapper, "update-auto-switch");
-    expect(sw.classes()).toContain("n-switch--active"); // 新装默认开启（ADR-0124 决策 8）
+    expect(sw.classes()).toContain("n-switch--active");
 
     await sw.trigger("click");
     await flushPromises();
 
-    // 渲染效果：真源持久化到 localStorage（开关→后端镜像的推送归设备偏好推送
-    // 宿主，见 useDevicePreferenceSync.test.ts 的同形先例）
     expect(localStorage.getItem("auto_update_enabled")).toBe("false");
   });
 
@@ -99,7 +91,6 @@ describe("UpdateSettings.vue — updater 形态（桌面三平台完整更新面
 
   it("手动检查相同 / 更旧同为「已是最新」（无强制升级门槛）", async () => {
     const wrapper = await mountCard("updater");
-    // 矩阵行：三态中非 update 两态同文案
     for (const status of ["same", "older"] as const) {
       wireInvokeSeam({
         defaults: {
@@ -134,7 +125,7 @@ describe("UpdateSettings.vue — updater 形态（桌面三平台完整更新面
     const wrapper = await mountCard("updater");
     wireInvokeSeam({
       defaults: { get_update_surface: "updater" },
-      overrides: { check_for_updates: () => new Promise(() => {}) }, // 悬挂 = 检查进行中
+      overrides: { check_for_updates: () => new Promise(() => {}) },
     });
     await button(wrapper, "update-check-btn").trigger("click");
     await flushPromises();
@@ -142,7 +133,6 @@ describe("UpdateSettings.vue — updater 形态（桌面三平台完整更新面
   });
 
   it("手动检查不受「已提醒版本」记忆限制（同版本仍就地呈现）", async () => {
-    // 启动提醒已弹过并记录的版本，手动检查仍如实呈现（AC：记忆只约束自动弹层）
     useAppStore().markUpdateReminded("2.0.0");
     wireInvokeSeam({
       defaults: {
@@ -166,7 +156,7 @@ describe("UpdateSettings.vue — updater 形态（桌面三平台完整更新面
         check_for_updates: { status: "update", version: "2.0.0", notes: null },
       },
       overrides: {
-        download_update: () => new Promise(() => {}), // 悬挂 = 下载进行中
+        download_update: () => new Promise(() => {}),
       },
     });
     const wrapper = mount(UpdateSettings);
@@ -176,7 +166,6 @@ describe("UpdateSettings.vue — updater 形态（桌面三平台完整更新面
     await button(wrapper, "update-card-download-btn").trigger("click");
     await flushPromises();
 
-    // 调用事实：download_update 已发起；渲染效果：流程进入下载中、提醒弹层打开承接进度
     expect(mockInvoke.mock.calls.some(([c]) => c === "download_update")).toBe(true);
     expect(useAppUpdate().stage.value).toBe("downloading");
     expect(useAppUpdate().modalOpen.value).toBe(true);

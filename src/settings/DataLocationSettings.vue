@@ -8,11 +8,6 @@ import { t } from "@ledger/i18n";
 import AppDangerConfirmModal from "@ledger/ui-kit/AppDangerConfirmModal.vue";
 import type { DataLocationChangeOutcome, DataLocationInfo } from "@ledger/types";
 
-// 数据存储位置卡片（issue #134 / ADR-0018）：消费 #133 命令层契约。
-// 显示值一律来自命令返回（设备本地偏好，前端不做持久化、不走 localStorage）；
-// 卡片内不做任何文件系统操作——校验与意图落盘全部由命令层完成，
-// 真实搬迁只发生在下次启动（引导内核），故文案必须讲清「下次启动生效」。
-
 const message = useMessage();
 
 const info = ref<DataLocationInfo | null>(null);
@@ -20,8 +15,6 @@ const loading = ref(false);
 const loadError = ref("");
 const submitting = ref(false);
 
-// 二选一确认弹窗（issue #652 / ADR-0078）：warning 级应用内弹窗替代原生 confirm，
-// 按钮语义显式（接管该库 / 取消换位）；目标已有同名库时挂起二次提交，确认后续接。
 const adoptConfirmShow = ref(false);
 let pendingAdopt: (() => Promise<DataLocationChangeOutcome>) | null = null;
 
@@ -31,7 +24,6 @@ async function refresh() {
   try {
     info.value = await api.getDataLocationInfo();
   } catch (e: any) {
-    // 读取失败诚实呈现，不用「读取中…」假装一切正常。
     loadError.value = t("settings.data.msg.loadFailed", { msg: errorMessage(e) });
     message.error(loadError.value);
   } finally {
@@ -41,9 +33,6 @@ async function refresh() {
 
 onMounted(refresh);
 
-// 复制路径（issue #653）：界面文本全局不可选（界面状态与交互域「界面文本不可选」），
-// 复制需求走显式通道——复制按钮 + clipboard API（关于页复制版本号同款接缝）。
-// 当前生效位置与待生效新位置各一个入口，写入的是命令返回的完整路径。
 async function copyText(value: string) {
   try {
     await navigator.clipboard.writeText(value);
@@ -61,7 +50,6 @@ function copyPendingPath() {
   if (info.value?.configured_dir) void copyText(info.value.configured_dir);
 }
 
-/** 唤起系统目录选择对话框，选中后提交更改意图。取消选择则不动状态。 */
 async function pickAndSubmit() {
   const dir = await open({
     directory: true,
@@ -72,12 +60,10 @@ async function pickAndSubmit() {
   await submitWithChoice((adoptExisting) => api.submitDataLocationChange(dir, adoptExisting));
 }
 
-/** 恢复默认位置：与更改完全同一确认与反馈形态，目标由命令层决定。 */
 async function restoreDefault() {
   await submitWithChoice((adoptExisting) => api.restoreDefaultDataLocation(adoptExisting));
 }
 
-/** 意图落位呈现：成功提示＋刷新展示（首次提交与接管二次提交共用出口）。 */
 async function applyOutcome(outcome: DataLocationChangeOutcome) {
   if (outcome.committed) {
     message.success(t("settings.data.location.committed"));
@@ -85,11 +71,6 @@ async function applyOutcome(outcome: DataLocationChangeOutcome) {
   await refresh();
 }
 
-/**
- * 提交更改意图并按命令结果分支呈现：
- * 校验通过 → 成功提示并刷新；目标已有同名库 → 二选一确认弹窗挂起二次提交；
- * 校验失败 → 错误反馈，状态不变。
- */
 async function submitWithChoice(
   submit: (adoptExisting: boolean) => Promise<DataLocationChangeOutcome>,
 ) {
@@ -109,7 +90,6 @@ async function submitWithChoice(
   }
 }
 
-/** 二选一确认「接管该库」：以 adopt_existing = true 二次提交（弹窗先关，与既有加载态衔接）。 */
 async function confirmAdopt() {
   const submit = pendingAdopt;
   pendingAdopt = null;
@@ -125,7 +105,6 @@ async function confirmAdopt() {
   }
 }
 
-/** 二选一取消「取消换位」：放弃本次更改，数据存储位置状态不变。 */
 function cancelAdopt() {
   pendingAdopt = null;
   adoptConfirmShow.value = false;

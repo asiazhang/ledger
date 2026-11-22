@@ -5,11 +5,6 @@ import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { installGlobalErrorHandler } from "@/composables/global-error-handler";
 import { useRenderErrorsStore } from "@/stores/render-errors";
 
-/**
- * 全局渲染错误兜底测试（issue #926）：errorHandler 的三个可见面——
- * 提示条状态落位、后端回传、防洪水护栏（同文案去重 / 每会话上限）。
- */
-
 type ErrorInfo = string;
 
 function makeApp() {
@@ -37,7 +32,6 @@ describe("installGlobalErrorHandler 渲染错误兜底", () => {
     errorHandlerOf(app)(new Error("boom-render"), "render");
     expect(store.message).toContain("boom-render");
     expect(store.message).toContain("render");
-    // 用户可关闭
     store.dismiss();
     expect(store.message).toBeNull();
   });
@@ -63,7 +57,6 @@ describe("installGlobalErrorHandler 渲染错误兜底", () => {
     handler(new Error("same-loop"), "render");
     handler(new Error("same-loop"), "render");
     handler(new Error("same-loop"), "render");
-    // 等动态 import 的 api 模块就绪后再断言
     await vi.waitFor(() => {
       expect(mockInvoke.mock.calls.some(([c]) => c === "log_frontend_error")).toBe(true);
     });
@@ -93,7 +86,6 @@ describe("installGlobalErrorHandler 渲染错误兜底", () => {
       const forwards = mockInvoke.mock.calls.filter(([c]) => c === "log_frontend_error");
       expect(forwards.length).toBe(50);
     });
-    // 上限后不再新增
     handler(new Error("flood-after-cap"), "render");
     await Promise.resolve();
     expect(mockInvoke.mock.calls.filter(([c]) => c === "log_frontend_error").length).toBe(50);

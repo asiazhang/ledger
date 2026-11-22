@@ -2,20 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { resolveSourceJumpTarget } from "@/components/source-jump";
 import type { TransactionSourceKind } from "@/components/source-jump";
 
-/**
- * 来源跳转目标计算模块测试（spec #704 / issue #705，词汇表「来源列」
- * 「实体定位参数（focus 参数）」）：纯函数直打——六类来源 × 主项/收纳两态 ×
- * 打开/关闭两态 → 路由目标（视图名 + query），断言输出对象形态，不接组件、
- * 不接 router。
- */
-
-/** 全主项态收纳谓词：一切目标视图都不在收纳清单。 */
 const allMain = () => false;
-/** 全收纳态收纳谓词：一切目标视图都在收纳清单。 */
 const allContained = () => true;
-/** 全打开态关闭谓词：一切目标功能都未关闭（issue #1244）。 */
 const allOpen = () => false;
-/** 全关闭态关闭谓词：一切目标功能都已关闭（issue #1244）。 */
 const allClosed = () => true;
 
 const SIX_KINDS: readonly TransactionSourceKind[] = [
@@ -144,11 +133,6 @@ describe("resolveSourceJumpTarget focus 参数统一装配", () => {
   });
 });
 
-/**
- * 关闭态（issue #1244 / ADR-0116 决策 4）：其他域对已有数据的引用照常放行，但引用
- * 落点是功能自有路由——关闭的功能不进组「更多」页签（ADR-0116 决策 3），转收纳落点
- * 会落进无对应页签的组页、focus 丢失。收纳/主项两态在关闭态下同落独立路由。
- */
 describe("resolveSourceJumpTarget 关闭态（引用不转收纳落点）", () => {
   it("计划三形态：收纳态也落定时独立路由，形态页签归位到定时视图 query.tab", () => {
     expect(resolveSourceJumpTarget("installmentPlan", "p1", allContained, allClosed)).toEqual({

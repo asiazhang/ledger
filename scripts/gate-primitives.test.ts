@@ -12,15 +12,6 @@ import {
   walkTextFiles,
 } from "./gate-primitives.ts";
 
-// 被测对象是守门家族共享原语库 scripts/gate-primitives.ts（issue #1680 库归库、门归门）：
-// 原语级测试面归库自身，掩码与遍历的正确性不再借结构守门的通过来间接证明。
-// - Rust 词法掩码双源防漂移语料与 lineAt / walkTextFiles 用例自 check-structure.test.ts
-//   迁入（#1433 / #1625「直测导出共享面」先例随库迁移，删除即变红判据不变：
-//   从库删掉一个导出 → 消费它的门 spawnSync 启动即崩 → 包装测试红 + 类型检查红）；
-// - TS/Vue 注释掩码用例自 ts-comment-mask.test.ts 迁入（#1481，模块已并入本库）。
-// （仓库根 = bun test 进程 cwd——bun test scripts/ 自仓库根发起；原 repoRoot 助手
-//  has-command-line.test-helper 已随守门挂载登记收编、消费清零而退役，issue #1682）
-
 const read = (rel: string): string => readFileSync(join(process.cwd(), ...rel.split("/")), "utf8");
 const tempDirs: string[] = [];
 afterAll(() => {
@@ -28,9 +19,6 @@ afterAll(() => {
 });
 
 describe("maskNonCode 双源防漂移语料（issue #1433）", () => {
-  // 与 Rust 侧唯一实现（src-tauri/src/test_support/scan.rs 的 mask_non_code）
-  // 消费同一夹具：语料输入 + 期望输出双文件共享，任一侧单独改词法规则即
-  // 本测或 Rust 语料测试红。（bun test 下取进程 cwd = 仓库根定位夹具，同上款先例）
   const corpusPath = join(process.cwd(), "scripts", "fixtures", "rust-mask-corpus.rs");
   const expectedPath = join(process.cwd(), "scripts", "fixtures", "rust-mask-corpus.expected.txt");
 
@@ -56,9 +44,6 @@ describe("maskNonCode 双源防漂移语料（issue #1433）", () => {
 });
 
 describe("守门家族共享扫描单点：命中行定位 lineAt + 文本面遍历 walkTextFiles（issue #1625）", () => {
-  // 守门家族共享面（供各守门直接消费）：行号定位与目录遍历收口单点，
-  // 扩展名闭集与豁免面属各守门政策经参数注入。
-
   it("lineAt：按命中点之前的换行数计行（1 起算），index undefined 按文首计", () => {
     const source = ["const a = 1;", "", "const url = 'https://x.example';"].join("\n");
     const m = /x\.example/.exec(source);
@@ -88,17 +73,13 @@ describe("守门家族共享扫描单点：命中行定位 lineAt + 文本面遍
     };
     const files = walkTextFiles(dir, "", options);
     expect(files.map((f) => f.rel)).toEqual(["CHANGELOG.md", "src/b.ts", "src/nested/a.rs"]);
-    // abs 与 rel 指向同一文件（读文件用 abs、报文定位用 rel）
     expect(files[2].abs).toBe(join(dir, "src", "nested", "a.rs"));
-    // 排序确定性：同一目录重复调用输出全等
     expect(walkTextFiles(dir, "", options).map((f) => f.rel)).toEqual(files.map((f) => f.rel));
   });
 
   it("walkTextFiles：relBase 前缀归一 rel 路径（扫描根 ≠ 仓库根的守门形态）", () => {
     const dir = mkdtempSync(join(tmpdir(), "walk-text-files-relbase-"));
     tempDirs.push(dir);
-    // check-infra-dml 形态：扫描根 = join(srcTauri, INFRA_SRC_REL)，relBase 同值——
-    // rel 不随夹具所在绝对路径漂移，始终以声明前缀归一。
     const scanRoot = join(dir, "crates", "infra", "src");
     mkdirSync(join(scanRoot, "db"), { recursive: true });
     writeFileSync(join(scanRoot, "db", "migrate.rs"), "pub fn migrate() {}\n");
@@ -115,12 +96,11 @@ describe("maskComments（TS/Vue 注释掩码库语义）", () => {
     const src = "a() // note\nx /* blk */ y\n";
     const out = maskComments(src);
     expect(out).toHaveLength(src.length);
-    // 换行位置逐列不变
     expect([...out].map((c) => c === "\n")).toEqual([...src].map((c) => c === "\n"));
     const [line0, line1] = out.split("\n");
-    expect(line0?.trimEnd()).toBe("a()"); // 行注释内容不再出现
-    expect(line1?.startsWith("x ")).toBe(true); // 块注释前代码保留
-    expect(line1?.endsWith(" y")).toBe(true); // 块注释后代码保留
+    expect(line0?.trimEnd()).toBe("a()");
+    expect(line1?.startsWith("x ")).toBe(true);
+    expect(line1?.endsWith(" y")).toBe(true);
     expect(line1).not.toContain("blk");
   });
 
@@ -133,12 +113,97 @@ describe("maskComments（TS/Vue 注释掩码库语义）", () => {
     const src = "const r = /a\\/\\/b/\nconst after = 1\n";
     expect(maskComments(src)).toBe(src);
   });
+
+  it("除法歧义两侧：标识符后除法链不当正则，赋值号后才按正则识别", () => {
+    const src = "const q = total / count / 2\nconst r = s.match(/x/g)\n";
+    expect(maskComments(src)).toBe(src);
+  });
+
+  it("除法后接行注释：除法斜杠不吞注释起点，行注释照常掩码", () => {
+    const src = "const q = total / // note\nconst after = 1\n";
+    expect(maskComments(src)).toBe(`const q = total / ${" ".repeat(7)}\nconst after = 1\n`);
+  });
+
+  it("字符类内斜杠不闭合正则：[/] 形态整体识别，其后代码保留", () => {
+    const src = "const seg = input.split(/[\\/]/)\nconst after = 1\n";
+    expect(maskComments(src)).toBe(src);
+  });
+
+  it("正则后跟行注释：正则体跳过后注释起点仍被掩码计数", () => {
+    const src = "const ok = /^\\d+$/.test(v) // trailing note\nconst after = 1\n";
+    expect(maskComments(src)).toBe(
+      `const ok = /^\\d+$/.test(v) ${" ".repeat(16)}\nconst after = 1\n`,
+    );
+  });
+
+  it("未闭合正则候选不逃逸：换行前无闭合斜杠按普通字符处理", () => {
+    const src = "const x = /abc\nconst after = 1\n";
+    expect(maskComments(src)).toBe(src);
+  });
 });
 
-// 「删除即变红」负向判据（ADR-0087 断言强度 / 接线型守门）：本票的核心价值是
-// maskComments 只有一份实现、两个门禁脚本消费同一出口。任一消费者删掉共享模块
-// import 并回退为本地副本（或共享模块定义被移除），下面的断言至少一条变红；
-// 只在真实仓行为层（exit code / output）保持绿无法单独锚定「同一出口」这条接线。
+describe("maskComments 正则字面量词法（#2211 毒化缺陷修复，ADR-0145 修订注记）", () => {
+  it("test-exec.ts:135 形态：引号入正则体不启伪字符串，误计 854 行毒化消除", () => {
+    const src =
+      [
+        "const quoted = text.match(/^(\"'])(.*)\\1$/);",
+        "if (quoted !== null) return quoted[2];",
+        "// real comment",
+        "const after = 1;",
+      ].join("\n") + "\n";
+    const masked = maskComments(src);
+    const lines = masked.split("\n");
+    expect(lines[0]).toBe("const quoted = text.match(/^(\"'])(.*)\\1$/);");
+    expect(lines[1]).toBe("if (quoted !== null) return quoted[2];");
+    expect(lines[2]).toBe(" ".repeat(15));
+    expect(lines[3]).toBe("const after = 1;");
+  });
+
+  it("棘轮失明洞闭合：正则体后的真注释行重新被计出（no-native-confirm 形态）", () => {
+    const src =
+      [
+        "const staticRe = /import\\s*\\{[^}]*\\bconfirm\\b[^}]*\\}\\s*from\\s*[\"']([\\w@/-]+)[\"']/g;",
+        "// first real comment",
+        "// second real comment",
+        "const done = 1;",
+      ].join("\n") + "\n";
+    const masked = maskComments(src);
+    const lines = masked.split("\n");
+    expect(lines[0]).toBe(src.split("\n")[0]);
+    expect(lines[1]?.trimEnd()).toBe("");
+    expect(lines[2]?.trimEnd()).toBe("");
+    expect(lines[3]).toBe("const done = 1;");
+  });
+
+  it("行首正则与跨行前导：赋值换行与多行实参中的行首正则识别，其后真注释保留", () => {
+    const src =
+      [
+        "const TEST_RESULT_RE =",
+        "  /^test result: (?:ok|FAILED)\\. (\\d+) passed;$/gm;",
+        "expect(",
+        "  /no-such-book/,",
+        ");",
+        "// counted note",
+      ].join("\n") + "\n";
+    const masked = maskComments(src);
+    const lines = masked.split("\n");
+    expect(lines[0]).toBe("const TEST_RESULT_RE =");
+    expect(lines[1]).toBe("  /^test result: (?:ok|FAILED)\\. (\\d+) passed;$/gm;");
+    expect(lines[3]).toBe("  /no-such-book/,");
+    expect(lines[5]?.trimEnd()).toBe("");
+  });
+
+  it("=> 与 return 前导的正则识别（仓内实证形态）", () => {
+    const src =
+      [
+        "const axumLine = lines.find((l) => /^\\s*axum\\s*=/.test(l));",
+        "return /mac/i.test(platform);",
+        "const after = 1;",
+      ].join("\n") + "\n";
+    expect(maskComments(src)).toBe(src);
+  });
+});
+
 describe("单源收敛：maskComments 只有一份实现（issue #1481，#1680 并入 gate-primitives）", () => {
   const consumers = ["check-frontend-structure.ts", "check-commands.ts"] as const;
 
@@ -148,7 +213,6 @@ describe("单源收敛：maskComments 只有一份实现（issue #1481，#1680 �
       expect(src).toMatch(
         /import\s*\{[^}]*\bmaskComments\b[^}]*\}\s*from\s*['"]\.\/gate-primitives\.ts['"]/,
       );
-      // 本地重定义（含函数表达式 / 箭头函数副本）同样即红
       expect(src).not.toMatch(/(?:function|const|let|var)\s+maskComments\b/);
     });
   }
@@ -158,10 +222,6 @@ describe("单源收敛：maskComments 只有一份实现（issue #1481，#1680 �
   });
 });
 
-// 一层列举与扩展名匹配的原语（#1742 收口）：平铺 readdir 与递归遍历形状不同构，
-// 收口为家族统一的单层语义——localeCompare 排序 + dirent 类型投影；hasExtension
-// 与 walkTextFiles 内部匹配同款，内联 endsWith(".rs") 残余（test-exec ×3、
-// check-structure ×1）换库扩展名闭集消费。
 describe("一层目录列举 readDirEntries + 点扩展名匹配 hasExtension（issue #1742）", () => {
   it("readDirEntries：一层列举不递归，dirent 类型投影（文件/目录）", () => {
     const dir = mkdtempSync(join(tmpdir(), "read-dir-entries-"));
@@ -172,7 +232,6 @@ describe("一层目录列举 readDirEntries + 点扩展名匹配 hasExtension（
     writeFileSync(join(dir, "subdir", "nested", "deep.rs"), "pub fn deep() {}\n");
 
     const entries = readDirEntries(dir);
-    // 一层：子目录只出现自身条目，不下降（嵌套内容不出现）；排序见下款
     expect(entries.map((e) => e.name)).toEqual(["a.rs", "subdir"]);
     expect(entries[0]).toEqual({ name: "a.rs", isDirectory: false, isFile: true });
     expect(entries[1]).toEqual({ name: "subdir", isDirectory: true, isFile: false });
@@ -182,7 +241,6 @@ describe("一层目录列举 readDirEntries + 点扩展名匹配 hasExtension（
     const dir = mkdtempSync(join(tmpdir(), "read-dir-entries-sort-"));
     tempDirs.push(dir);
     for (const name of ["B", "a", "c"]) writeFileSync(join(dir, name), "x");
-    // localeCompare 大小写不敏感主级比较：a < B；plain sort 按码点会得 ["B", "a", "c"]
     expect(readDirEntries(dir).map((e) => e.name)).toEqual(["a", "B", "c"]);
   });
 
@@ -218,13 +276,6 @@ describe("一层目录列举 readDirEntries + 点扩展名匹配 hasExtension（
   });
 });
 
-// Rust 词法掩码单源收敛（#1680）：maskNonCode 的 TS 消费名单锁定——任一消费方摘掉
-// 库 import、回退本地副本（或新脚本绕开库自建第四份实现），下面的断言即红；
-// 语料期望只锁规则本身，名单把「谁在消费同一实现」也钉住，防分歧潜伏。
-// #1741 起名单含两份弱形态注释处理器的收口方：check-commands（命令注解腿，
-// 原自持逐行 stripLineComment）、check-i18n-keys（码化构造点提取腿，原自持
-// stripRustComments）——摘掉 import 即红；弱形态回潮的守门在两门各自的
-// 包装夹具（掩码权威形态旧红新绿），本名单只钉「谁在消费同一实现」。
 describe("单源收敛：Rust 词法掩码只有一份实现（#1680 / #1741）", () => {
   const consumers = [
     "check-structure.ts",
@@ -242,7 +293,6 @@ describe("单源收敛：Rust 词法掩码只有一份实现（#1680 / #1741）"
       expect(src).toMatch(
         /import\s*\{[^}]*\bmaskNonCode\b[^}]*\}\s*from\s*['"]\.\/gate-primitives\.ts['"]/,
       );
-      // 本地重定义（含函数表达式 / 箭头函数副本）同样即红
       expect(src).not.toMatch(/(?:function|const|let|var)\s+maskNonCode\b/);
     });
   }

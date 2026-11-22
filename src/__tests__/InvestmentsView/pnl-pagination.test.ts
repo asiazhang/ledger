@@ -11,13 +11,11 @@ import { mountWithDialog } from "@ledger/test-support/mount";
 import { makeInvestmentOverview, makeMwrSummary, makePnlSummary } from "../factories";
 import type { AccountPnl, YearPnl } from "@ledger/types";
 
-// 走势图用共享桩组件替代（同 InvestmentsView.test.ts 基座）
 vi.mock("vue-chartjs", async () => {
   const { LineChartStub } = await import("../line-chart-stub");
   return { Line: LineChartStub };
 });
 
-// 价格失效信号订阅 mock（同 InvestmentsView.test.ts 基座）
 vi.mock("@/investment/usePricesChanged", async () => {
   const { capturePricesChangedHandler } = await import("../prices-changed-mock");
   return {
@@ -25,7 +23,6 @@ vi.mock("@/investment/usePricesChanged", async () => {
   };
 });
 
-// focus 参数读取自路由 query（同 InvestmentsView.test.ts 的可控 mockRoute 先例）
 const pushMock = vi.fn();
 const mockRoute = { query: {} as Record<string, string> };
 vi.mock("vue-router", () => ({
@@ -35,7 +32,6 @@ vi.mock("vue-router", () => ({
 
 const mountView = () => mountWithDialog(InvestmentsView);
 
-// —— 夹具：按年后端升序返回（ORDER BY year），共 10 年 ——
 const TEN_YEARS: YearPnl[] = Array.from({ length: 10 }, (_, i) => {
   const year = String(2017 + i);
   return {
@@ -47,7 +43,6 @@ const TEN_YEARS: YearPnl[] = Array.from({ length: 10 }, (_, i) => {
   };
 });
 
-/** 按账户行：后端 ORDER BY account_name，此处即返回序 */
 const TEN_ACCOUNTS: AccountPnl[] = Array.from({ length: 10 }, (_, i) => ({
   account_id: `acc-${i + 1}`,
   account_name: `账户${i + 1}`,
@@ -73,8 +68,6 @@ beforeEach(async () => {
   mockRoute.query = {};
   await wireInvokeSeam({ defaults: PNL_DEFAULTS, refreshReferenceStores: true }).ready;
 });
-
-// —— 视图装配多表格：按首列 key 定位目标表（year / account_name / scope 三表互异）——
 
 type NDataTableWrapper = VueWrapper<InstanceType<typeof NDataTable>>;
 
@@ -116,7 +109,6 @@ describe("盈亏页两表客户端切片分页（issue #1795）", () => {
     const p = paginationOf(table);
     expect(p.pageSize).toBe(PNL_PAGE_SIZE);
     expect(p.page).toBe(1);
-    // 降序：后端升序行集在前端倒转，第 1 页 = 最近年份
     expect(cellTexts(table, "year")).toEqual([
       "2026",
       "2025",
@@ -127,7 +119,6 @@ describe("盈亏页两表客户端切片分页（issue #1795）", () => {
       "2020",
       "2019",
     ]);
-    // 翻页条在场（>8 行）
     expect(table.find(".n-pagination").exists()).toBe(true);
 
     p.onChange(2);
@@ -143,7 +134,6 @@ describe("盈亏页两表客户端切片分页（issue #1795）", () => {
     const table = tableByFirstKey(wrapper, "account_name");
     const p = paginationOf(table);
     expect(p.pageSize).toBe(PNL_PAGE_SIZE);
-    // 保持后端 ORDER BY account_name 返回序，不引入新排序口径
     expect(cellTexts(table, "account_name").slice(0, 2)).toEqual(["账户1", "账户2"]);
     p.onChange(2);
     await flushPromises();
@@ -171,7 +161,6 @@ describe("盈亏页两表客户端切片分页（issue #1795）", () => {
     const table = tableByFirstKey(wrapper, "year");
     expect(table.props("paginateSinglePage")).toBe(false);
     expect(table.find(".n-pagination").exists()).toBe(false);
-    // 全量直显仍为降序（最新年在前）
     expect(cellTexts(table, "year")).toEqual(["2019", "2018", "2017"]);
   });
 
@@ -197,9 +186,6 @@ describe("盈亏页两表客户端切片分页（issue #1795）", () => {
     await flushPromises();
     expect(paginationOf(tableByFirstKey(wrapper, "year")).page).toBe(2);
     expect(paginationOf(tableByFirstKey(wrapper, "account_name")).page).toBe(2);
-    // 账户筛选（面板首个 PinyinSelect）实际变化：数据重拉 + 两表页码归零（MoneyWeightedReturn
-    // 测试同款驱动）。行集不缩水（桩固定 10 行）也回第 1 页——归零只能来自归零接线，
-    // 删除 useRealizedPnl 的 watch 即停留第 2 页变红。
     const select = wrapper.findComponent({ name: "PinyinSelect" });
     componentVm(select).$emit("update:value", "acc-1");
     await flushPromises();
@@ -211,7 +197,6 @@ describe("盈亏页两表客户端切片分页（issue #1795）", () => {
     const wrapper = mountView();
     await flushPromises();
     await openPnl(wrapper);
-    // 10 行 × 8 行/页 = 2 页有效；越界页码 99 回落到 2 并写回 store
     const session = useInvestmentsSessionStore();
     session.setPnlYearPage(99);
     await nextTick();

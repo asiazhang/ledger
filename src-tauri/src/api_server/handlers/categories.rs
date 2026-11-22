@@ -1,8 +1,3 @@
-//! 分类端点：列表 / 幂等创建 / 软删除。
-//!
-//! 写端点经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）；
-//! 读端点经 `run_db`（形状乙）。
-
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -55,10 +50,6 @@ pub async fn create_category_handler(
     State(emitter): State<EmitterSlot>,
     body: String,
 ) -> Result<(StatusCode, Json<String>), AppError> {
-    // 请求体反序列化失败保留裸 Invalid（ADR-0050 决策 2 允许的「程序性/内部
-    // 错误」，#1072 明确不转）：message 是 JSON 解析器的技术错误原文（英文、
-    // 位置相关），没有可逐字保留的中文模板，与同族的 sync_engine 序列化失败
-    // 同待遇；HTTP 400 与 `kind` 形状不变。
     let input: CategoryInput =
         serde_json::from_str(&body).map_err(|e| AppError::Invalid(e.to_string()))?;
     write_entry(

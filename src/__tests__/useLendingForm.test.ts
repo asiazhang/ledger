@@ -5,7 +5,6 @@ import { resolveLendingDirection } from "@/transaction/lending";
 import { useLendingForm } from "@/transaction/useLendingForm";
 import type { Account, Transaction } from "@ledger/types";
 
-/** 覆盖资金侧（cash/bank）、借出侧（receivable）、负债侧（debt）的账户集 */
 const mockAccounts: Account[] = [
   acc("acc-cash", "现金", "cash"),
   acc("acc-bank", "银行", "bank"),
@@ -43,7 +42,6 @@ const FUND_IDS = ["acc-cash", "acc-bank"];
 const RECV_IDS = ["acc-recv-zhang", "acc-recv-co"];
 const DEBT_IDS = ["acc-debt-li"];
 
-/** 参考命令覆写集（beforeEach 与用例级覆写共享）：账户保留本文件夹具，其余三表空集。 */
 const REFERENCE_OVERRIDES = {
   list_accounts: mockAccounts,
 };
@@ -51,7 +49,6 @@ const REFERENCE_OVERRIDES = {
 describe("useLendingForm（借贷变体 composable，issue #374 S3）", () => {
   beforeEach(async () => {
     wireInvokeSeam({ overrides: { ...REFERENCE_OVERRIDES } });
-    // 账户过滤集断言依赖参考数据就绪：等 self-init 拉取完成
     await useReferenceStore().refresh();
   });
 
@@ -108,7 +105,6 @@ describe("useLendingForm（借贷变体 composable，issue #374 S3）", () => {
       const form = useLendingForm();
       form.accountId.value = "acc-cash";
       form.toAccountId.value = "acc-recv-zhang";
-      // 借出 → 还款：转出侧同为资金账户保留，转入侧 receivable 不再合规清空
       form.setDirection("repay");
       expect(form.accountId.value).toBe("acc-cash");
       expect(form.toAccountId.value).toBeNull();
@@ -118,7 +114,6 @@ describe("useLendingForm（借贷变体 composable，issue #374 S3）", () => {
       const form = useLendingForm();
       form.accountId.value = "acc-recv-zhang";
       form.toAccountId.value = "acc-debt-li";
-      // 借出 → 还款：转入侧 debt 仍合规保留，转出侧 receivable 越侧清空
       form.setDirection("repay");
       expect(form.accountId.value).toBeNull();
       expect(form.toAccountId.value).toBe("acc-debt-li");
@@ -234,7 +229,6 @@ describe("useLendingForm（借贷变体 composable，issue #374 S3）", () => {
   });
 
   describe("编辑模式（借贷形态回填）", () => {
-    /** 历史借贷：现金 → 借出·张三（transfer，账户类型正确即自动获得借贷形态） */
     const editingTx: Transaction = {
       id: "txn-200",
       kind: "transfer",
@@ -269,7 +263,6 @@ describe("useLendingForm（借贷变体 composable，issue #374 S3）", () => {
       expect(form.direction.value).toBe("lend");
       expect(form.accountId.value).toBe("acc-cash");
       expect(form.toAccountId.value).toBe("acc-recv-zhang");
-      // 金额按币种小数位换算回填（30000 分 → 300 元，不手写 /100）
       expect(form.amountText.value).toBe("300");
     });
 
@@ -372,8 +365,6 @@ describe("resolveLendingDirection（编辑形态识别，S1 消费点）", () =>
         typeOf,
       ),
     ).toBeNull();
-    // 借贷侧 + 对端账户取不到类型（黑洞 is_hidden / 已删 / 不可查）→ 仍按借贷方向派生：
-    // 未知转出 → receivable = 借出，不因对端缺失退回普通转账。
     expect(
       resolveLendingDirection(
         { kind: "transfer", account_id: "acc-gone", to_account_id: "acc-recv-zhang" },
@@ -384,7 +375,6 @@ describe("resolveLendingDirection（编辑形态识别，S1 消费点）", () =>
 });
 
 describe("useLendingForm 账户归档（spec #1952 / ADR-0142 决策 4）：选择面排除 + 编辑面补值", () => {
-  /** 已归档的借出账户（借贷账户是归档主目标） */
   const archivedRecv: Account = {
     ...acc("acc-recv-arch", "借出·旧账", "receivable"),
     is_archived: true,
@@ -438,7 +428,6 @@ describe("useLendingForm 账户归档（spec #1952 / ADR-0142 决策 4）：选�
       label: "借出·旧账（已归档）",
       value: "acc-recv-arch",
     });
-    // 资金侧（转出）不受影响：补值只动已存值那一侧
     expect(optionIds(form.fromAccountOptions.value)).toEqual(FUND_IDS);
   });
 });

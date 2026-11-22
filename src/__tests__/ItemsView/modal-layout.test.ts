@@ -4,13 +4,6 @@ import { mount, flushPromises } from "@vue/test-utils";
 import ItemsView from "@/views/ItemsView.vue";
 import type { ItemWithDailyCost } from "@ledger/types";
 
-// 物品弹窗族排版统一（issue #634，spec #630）：三个弹窗的卡片外观收敛为
-// AppModal cardSize 单一声明——编辑/处置归 sm（420）、详情归 md（480）；
-// 显式 style 宽度由 cardSize 承担，无边框由 AppModal 默认承担。断言只看
-// 组件可观察输出（卡片宽度样式与边框类），不深究 naive-ui 内部实现。
-// 布线走唯一接缝（issue #748）：清单所需的最小领域契约进 defaults 表，
-// 参考字典五命令由规范夹具兜底；清理四件套由全局壳层承担。
-
 vi.mock("vue-router", () => ({
   useRoute: () => ({ query: {} }),
   useRouter: () => ({ push: vi.fn() }),
@@ -39,7 +32,6 @@ const mockItem: ItemWithDailyCost = {
 };
 
 beforeEach(() => {
-  // 本测试不依赖交易候选，任意 kind 一律空列表；清单数据为 mockItem
   wireInvokeSeam({
     defaults: {
       list_transactions: { items: [], total: 0 },
@@ -48,7 +40,6 @@ beforeEach(() => {
   });
 });
 
-/** 取弹窗卡片元素：preset="card" 下 $attrs（含 data-testid）落在 NCard 根元素。 */
 function modalCard(testid: string): HTMLElement {
   const modal = document.body.querySelector<HTMLElement>(`[data-testid="${testid}"]`);
   expect(modal, `应能找到弹窗 [${testid}]`).not.toBeNull();
@@ -56,7 +47,6 @@ function modalCard(testid: string): HTMLElement {
   return modal!;
 }
 
-/** 断言弹窗卡片：宽度档位 + 无边框（AppModal 默认，调用点不再显式声明）。 */
 function expectCardSize(card: HTMLElement, width: string) {
   expect(card.style.width).toBe(width);
   expect(card.classList.contains("n-card--bordered")).toBe(false);

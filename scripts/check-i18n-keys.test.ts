@@ -4,15 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 
-// 被测对象是仓库工具脚本 scripts/check-i18n-keys.ts（i18n key 全等校验门槛 +
-// 码化错误模板覆盖守门，issue #1188 / ADR-0050）。
-// 脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun') 与门槛
-// 调用同款拉起，测的就是门槛路径。
-// 按测试决策只测外部可观察结果——进程退出码与输出，不测内部函数；
-// 通过位置参数把扫描目标指向临时夹具目录（仿 check-commands.test.ts 先例）。
-// 注意：目录名即域前缀（common.json 内层不再重复域名）。
-// 夹具布局：<root>/locales/{zh-CN,en-US}（固定含空 errors.json，码化覆盖守门的比对对象）
-// + <root>/rust（Rust 扫描根，默认无码化构造点）。
 const script = gateScript("check-i18n-keys.ts");
 
 const tmpDirs: string[] = [];
@@ -57,11 +48,6 @@ afterAll(() => {
 
 describe("i18n key 全等校验（check.sh 质量门槛）", () => {
   it("真实仓库默认通过：两语言 key 全等且码化错误模板全覆盖（现行仓库绿）", () => {
-    // 无位置参数 = 真实仓库默认路径（locales 随 @ledger/i18n 包走 + src-tauri 扫描根）。
-    // 随守门测试挂载进 CI（issue #1473 引入挂载；#1991 起运行口径 = bun test
-    // scripts/）：真实仓违规即红，不再只靠本地
-    // 自觉跑 check.sh。两条成功行都携带动态计数/规则名——对应规则被删除时该行
-    // 消失、本用例随之变红，绿基线不是空转（「删除规则 → 真实仓用例红」的实证载体）。
     const r = runGateScript(script);
     expect(r.status).toBe(0);
     expect(r.output).toContain("i18n key 全等");
@@ -199,9 +185,6 @@ describe("码化错误模板覆盖守门（issue #1188 / ADR-0050）", () => {
   });
 
   it("注释掩码口径（issue #1741 收口）：嵌套块注释内的构造点不入枚举", () => {
-    // 码化构造点提取腿自 #1741 起消费共享原语 maskNonCode(·, true)：块注释按
-    // Rust 语义嵌套配对整体掩掉（弱形态剥离器在首个 */ 收尾，夹层里的注释体
-    // 被误保留、其中的构造点误入枚举而假红）。
     const dir = makeFixture(
       { "common.json": { save: "保存" } },
       { "common.json": { save: "Save" } },

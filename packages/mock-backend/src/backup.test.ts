@@ -3,16 +3,8 @@ import { installMockBackend } from "./index";
 import { invoke } from "./tauri/core";
 import type { AutoBackupState, BackupMetaSummary, PruneResult } from "@ledger/types";
 
-/**
- * 备份域替身测试（issue #1966 / spec #1964 / ADR-0143 决策 1）：环境壳不模拟
- * 文件系统备份引擎——创建/恢复答占位回执（路径回显来自 plugin-dialog 假路径）、
- * 元数据答明文手动占位、清单空、修剪零动作；自动备份状态答默认开启从未备份
- * 常量、开关与目录推送 void，不发 ledger:backups-changed，保证设置页备份卡片
- * 可导航不报错。接缝 = tauri 命令面，删除任一登记行即未命中报错、本文件变红。
- */
-
 beforeEach(() => {
-  installMockBackend(); // 重装即重播种：每用例从夹具种子起步
+  installMockBackend();
 });
 
 describe("手动备份与恢复：占位回执", () => {
@@ -77,7 +69,6 @@ describe("自动备份：默认开启、从未备份常量态", () => {
     await expect(
       invoke<void>("set_auto_backup_dir", { dir: "/mock/backups" }),
     ).resolves.toBeUndefined();
-    // 常量态：推送不落内存，回读仍默认开启从未备份
     await expect(invoke<AutoBackupState>("get_auto_backup_state")).resolves.toEqual({
       enabled: true,
       last_backup_at: null,

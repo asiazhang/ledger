@@ -64,7 +64,6 @@ const editingTx: Transaction = {
   convert: null,
 };
 
-/** 非参考命令面：保单 store 重拉的两命令（参考五命令由接缝规范夹具兜底）。 */
 const BASE_DEFAULTS = {
   list_policies: mockPolicies,
   list_policy_stats: [],
@@ -78,7 +77,6 @@ function updateCalls() {
   return mockInvoke.mock.calls.filter(([cmd]) => cmd === "update_transaction");
 }
 
-/** 提交入参：创建路径取 create_transaction，编辑路径取 update_transaction。 */
 function submitCallInput(): Record<string, unknown> | undefined {
   const call = createCalls()[0] ?? updateCalls()[0];
   return (call?.[1] as { input: Record<string, unknown> } | undefined)?.input;
@@ -88,12 +86,10 @@ function merchantCreateCalls() {
   return mockInvoke.mock.calls.filter(([cmd]) => cmd === "create_merchant");
 }
 
-/** 填必填项后提交，返回 create_transaction 入参（不存在时为 undefined）。 */
 async function submitWithMerchant(
   merchantRef: string | null,
   options?: Parameters<typeof useCategoryForm>[1],
 ) {
-  // 参考 store self-init 异步：先等首拉完成，保证 merchantByName/merchantMap 就绪
   await useReferenceStore().refresh();
   await usePoliciesStore().refresh();
   const form = useCategoryForm("expense", options);
@@ -186,13 +182,10 @@ describe("useCategoryForm 商户输入（issue #189）", () => {
     it("原商户已被软删（不在字典）：提交保持原 id（历史引用照常保留），兜底选项可显示", async () => {
       wireInvokeSeam({
         defaults: BASE_DEFAULTS,
-        overrides: {
-          // 参考命令本场景需自定义值（overrides 优先于参考兜底）：字典为空，mch-1 视同已软删
-        },
+        overrides: {},
       });
       await useReferenceStore().refresh();
       const form = useCategoryForm("expense", { editing: () => editingTx });
-      // 回填时不可用 uuid 裸值展示：兜底选项以可读标签承载原 id
       expect(form.merchantOptions.value.some((o) => o.value === "mch-1")).toBe(true);
       form.amountText.value = "50";
       form.accountId.value = "acc-1";
@@ -203,7 +196,6 @@ describe("useCategoryForm 商户输入（issue #189）", () => {
   });
 
   describe("保单选择器（issue #361）", () => {
-    /** 填必填项 + 保单后提交，返回 create_transaction 入参。 */
     async function submitWithPolicy(policyId: string | null) {
       await useReferenceStore().refresh();
       await usePoliciesStore().refresh();
@@ -235,7 +227,6 @@ describe("useCategoryForm 商户输入（issue #189）", () => {
       const editingWithPolicy: Transaction = { ...editingTx, policy_id: "pol-1" };
       const form = useCategoryForm("expense", { editing: () => editingWithPolicy });
       expect(form.policyId.value).toBe("pol-1");
-      // 模拟原保单已软删：重拉后 store 列表不含 pol-1
       wireInvokeSeam({ defaults: { list_policies: [] } });
       await usePoliciesStore().refresh();
       expect(form.policyOptions.value.some((o) => o.value === "pol-1")).toBe(true);

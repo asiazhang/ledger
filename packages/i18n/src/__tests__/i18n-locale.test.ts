@@ -2,10 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h } from "vue";
 import { mount } from "@vue/test-utils";
 
-// 语言判定/切换逻辑（issue #342 / ADR-0049）：只测外显行为——判定链优先级、
-// 覆盖持久化、切换信号传播（currentLocale 与 t() 输出）、懒加载触发、
-// 未翻译回退与 dev 缺失告警。每个用例经 vi.resetModules 取全新模块状态，
-// 避免单例 i18n 实例跨用例串扰。
 function stubNavigatorLanguage(lang: string) {
   Object.defineProperty(window.navigator, "language", {
     value: lang,
@@ -98,7 +94,6 @@ describe("懒加载与回退", () => {
 describe("组件渲染随语言切换即时变化（外显行为）", () => {
   it("切换语言后已挂载组件的文案随当前语言渲染", async () => {
     const { applyLocale, t } = await freshI18n();
-    // 组件与业务代码同一消费方式：引用模块级 t() 做渲染输出
     const LangText = defineComponent({
       setup() {
         return () => h("span", t("common.language.label"));

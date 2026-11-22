@@ -1,28 +1,3 @@
-//! 腾讯行情批量报价取数单元（ADR-0130 决策 2/3 / issue #1558）。
-//!
-//! 一次请求携带多只沪深港美股票与场内基金（`GET https://qt.gtimg.cn/q=<代码逗号串>`，
-//! GBK 编码、无需 Referer），解析出代码、名称、价格、价格日期、证券类型码、币种与
-//! 交易所后缀。类型码按市场分三套字段布局（A 股 88 字段 / 港股 78 / 美股 73，下标
-//! 随之不同，不能按固定下标取），字段布局由 [`quote_layout`] 单点定义、类型码探测
-//! 收口在 [`detect_kind_hint`] 单点；币种与美股交易所后缀同样自报（`.OQ` → 纳斯达
-//! 克 / `.N` → 纽交所 / `.AM` → 美交所）。
-//! 行情日期取数据源给出的交易所当地交易日的日期部分，**不做时区换算**（ADR-0130
-//! 决策 5）——沿用北京时间切分会把美股周五的收盘记成周六。
-//!
-//! 本单元只取数与解析，不落库、不接 UI；现价刷新接线见通道束（issue #1560），
-//! 按代码查询 / 创建接线见 [`super::stock`]（issue #1567，[`TencentQuote::into_quote`
-//! ] 投影统一载荷）。
-//!
-//! fail-closed：被风控拦截的响应（HTML 页 / 空体）与非预期形状（缺报价语句、GBK
-//! 解码出错、字段数少于该市场布局下界、未知市场前缀、未知美股交易所后缀）一律报
-//! 错，**不**退化为「无数据」空序列——空序列会让「今天没有行情」与「数据源坏了」
-//! 不可分辨。合法的「批量内全部代码无效」由数据源以 `v_pv_none_match="1"` 明示，
-//! 仍按零命中（空序列）返回。
-//!
-//! 报文形态是未公开字段（腾讯无公开契约），探测与解析收口于本模块，漂移时改一处；
-//! fixture 单测钉住取数面实测（2026-09-19 采集，行情日为 2026-09-18）的真实报文
-//!（三套布局的类型码、币种与交易所后缀）。
-
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::prices::TENCENT_PRICE_SOURCE;
 use ledger_investment::{InstrumentType, Market, Quote, StockRoute};
@@ -31,44 +6,25 @@ use super::channels::{QuoteItem, QuoteQuery};
 use super::http::{Pacer, RetryConfig, request_bytes_from_hosts};
 use super::source_tail;
 
-/// 生成主机：腾讯财经公开报价端点（免费、无需 key 与 Referer；ADR-0130 决策 2）。
-/// 入口按参数收主机，测试经本地 HTTP 服务注入假响应。
 pub(super) const TENCENT_QUOTE_HOSTS: &[&str] = &["https://qt.gtimg.cn"];
 
-/// 端点形态是**路径段** `q=<代码逗号串>`（不是查询参数）：
-/// `GET https://qt.gtimg.cn/q=sh600000,sz000001`。
 pub(super) const TENCENT_QUOTE_PATH_PREFIX: &str = "/q=";
 
-/// 单次请求最多携带的查询键数：实测约 900 只撞 ~8KB 请求行上限（950 只 → HTTP 414），
-/// 取 800 留足余量（2026-09-19 取数面实测，`docs/research/market-quote-data-sources.md`
-/// §13.2）。超出的查询由 [`fetch_tencent_quotes`] 分批成多次请求。
 pub(super) const TENCENT_QUOTE_BATCH_SIZE: usize = 800;
 
-/// 腾讯行情单条报价（取数层产出）：数据源自报字段全量解出，交消费方投影。
 #[derive(Debug, Clone, PartialEq)]
 pub struct TencentQuote {
-    /// 裸代码：沪深/港股为回显数字代码（港股已 5 位补零），美股为去交易所后缀的大写 ticker。
     pub code: String,
-    /// 数据源权威名称（中文简称）。
     pub name: String,
-    /// 最新价（万分之一元，0.0001 元，价格刻度 ADR-0038）；停牌/无效价（≤0）为 None。
     pub price_cents: Option<i64>,
-    /// 价格日期（ISO 日期）：取数据源交易所当地交易日的日期部分，不做时区换算。
     pub price_date: Option<String>,
-    /// 精确市场（市场闭集类型，[`Market`]）：美股由自报交易所后缀判定（issue #1673）。
     pub market: Market,
-    /// 证券类型码原值（未公开字段）：`GP-A` / `ETF` / `LOF` / `ZQ-KZZ` / `GP` / `GP-ETF`。
     pub security_type: String,
-    /// 类型提示（stock / etf）：类型码经 [`detect_kind_hint`] 单点探测。
     pub kind_hint: InstrumentType,
-    /// 报价币种（数据源自报）：CNY / HKD / USD。
     pub currency_code: String,
 }
 
 impl TencentQuote {
-    /// 投影为通道束载荷 [`QuoteItem`]（issue #1560）：编排只需代码 / 名称 /
-    /// 价格 / 行情日期，数据源私有字段（类型码 / 币种 / 精确市场）留在本层。
-    /// 投影定义在取数单元内（而非接缝模块）：换源时改的是投影端，接缝零知识。
     pub(super) fn into_quote_item(self) -> QuoteItem {
         QuoteItem {
             code: self.code,
@@ -78,13 +34,6 @@ impl TencentQuote {
         }
     }
 
-    /// 投影为行情接入接缝的统一载荷 [`Quote`]（ADR-0103）：场内通道成员（代码 /
-    /// 名称 / 价格 / 价格日期 / 精确市场 / 类型提示）就位，场外成员（基金分类 /
-    /// 净值日期 / 恒定价格信号）恒缺省。消费方为按代码查询 / 创建接线（#1567）。
-    /// 币种不随投影携带：统一载荷无币种成员，落库与响应按精确市场推导
-    ///（`derive_quote_currency`，ADR-0037 决策 2）——当前闭集内与自报币种
-    ///（CNY/HKD/USD）恒等；若数据源自报漂移，判据在本层 `currency_code` 字段
-    ///（fixture 钉住），届时显式改投影，不静默沿用推导。
     pub fn into_quote(self) -> Quote {
         Quote {
             code: self.code,
@@ -96,16 +45,11 @@ impl TencentQuote {
             fund_class: None,
             nav_date: None,
             constant_unit_price_cents: None,
-            // 来源随取数产物携带（ADR-0130 决策 7）：场内行情自腾讯取得。
             price_source: TENCENT_PRICE_SOURCE,
         }
     }
 }
 
-/// 腾讯请求键的市场段前缀（源请求词汇，模块本地，issue #1673）：沪深港用市场
-/// 字符串前缀，美股聚合路由 [`StockRoute::Us`] 用 `us` 前缀（腾讯不区分交易所，
-/// 精确交易所由响应自报后缀判定）。「美股三市场聚合单查询」的领域判定在投资域
-/// 市场类型上（`QuoteMarket::as_stock_route`），本表只承担拼写信源词汇。
 fn route_key_prefix(route: StockRoute) -> &'static str {
     match route {
         StockRoute::Sh => "sh",
@@ -115,23 +59,10 @@ fn route_key_prefix(route: StockRoute) -> &'static str {
     }
 }
 
-/// 「路由 + 代码」→ 腾讯查询键（键构造单点，ADR-0130 决策 2 / issue #1555 的换源
-/// 落点 / issue #1673 全函数化）：`<前缀><代码>`（`sh600000` / `sz161725` /
-/// `hk00700` / `usAAPL`）。路由位是解析流程内部小闭集 [`StockRoute`]（同步批量面
-/// 经 `QuoteQuery.market.as_stock_route()` 投影），四值全部可构造键——**全函数**，
-/// 「市场无法构造查询键」的运行时兜底在类型上不可表达。按代码查询的单只取数
-///（#1567）同函数消费。
 pub(super) fn tencent_query_key(route: StockRoute, code: &str) -> String {
     format!("{}{code}", route_key_prefix(route))
 }
 
-/// 证券类型码 → 类型提示单点（ADR-0130 决策 3）：场内基金类（`ETF` / `LOF` /
-/// `GP-ETF`）探测为 etf，其余（`GP-A` / `GP`）探测为 stock。
-///
-/// 可转债（A 股 `ZQ-KZZ`）与股票同走行情通道：ADR-0081 的场内类型提示只有 stock /
-/// etf 两值，既有东财口径同样把「非场内基金特征」判为 stock，且 `InstrumentType::Bond`
-/// 不在行情通道（会退成手动报价）——沿旧判据保持行为不变。类型码是未公开字段，
-/// 探测漂移只改本函数一处。
 pub(super) fn detect_kind_hint(security_type: &str) -> InstrumentType {
     match security_type {
         "ETF" | "LOF" | "GP-ETF" => InstrumentType::Etf,
@@ -139,9 +70,6 @@ pub(super) fn detect_kind_hint(security_type: &str) -> InstrumentType {
     }
 }
 
-/// 十进制价格串（`9.07` / `4.582` / `419.000`）→ 万分之一元（0.0001 元，价格刻度
-/// ADR-0038）。腾讯报价不超过 4 位小数，不足补零、超出截断；≤0 或非数值返回 None
-/// （停牌 / 无效价）。走整数换算避开浮点误差。
 pub(super) fn price_cents_from_decimal(raw: &str) -> Option<i64> {
     let raw = raw.trim();
     let (int_part, frac_part) = match raw.split_once('.') {
@@ -170,10 +98,6 @@ pub(super) fn price_cents_from_decimal(raw: &str) -> Option<i64> {
     (cents > 0).then_some(cents)
 }
 
-/// 数据源时间戳 → 价格日期（ISO 日期）：取交易所当地交易日的**日期部分**，不做
-/// 时区换算（ADR-0130 决策 5）。三套布局的时间戳形态不同——A 股 `YYYYMMDDhhmmss`、
-/// 港股 `YYYY/MM/DD hh:mm:ss`、美股 `YYYY-MM-DD hh:mm:ss`——按形态解析后统一输出
-/// `YYYY-MM-DD`；不可解析为 None。
 pub(super) fn price_date_from_timestamp(raw: &str) -> Option<String> {
     let raw = raw.trim();
     for format in [
@@ -191,25 +115,14 @@ pub(super) fn price_date_from_timestamp(raw: &str) -> Option<String> {
     None
 }
 
-/// GBK 字节 → 文本：解码原语收口在 HTTP 层单点（[`super::http::decode_gbk`]）——
-/// 腾讯报价与新浪场外基金批量面同为 GBK 通道，共用一份实现（issue #1564 上收）。
 use super::http::decode_gbk;
 
-/// 三套字段布局的唯一下标表（ADR-0130 决策 3 / 2026-09-19 取数面实测）：类型码、
-/// 币种与字段数下界按市场不同，不能按固定下标取。`min_fields` 是布局漂移的判据——
-/// 字段数低于该市场下界即 fail-closed，不静默当「行情缺一只」。
 struct QuoteLayout {
-    /// 证券类型码下标。
     kind_index: usize,
-    /// 币种下标。
     currency_index: usize,
-    /// 正常报文的字段数下界。
     min_fields: usize,
 }
 
-/// 响应报价键的市场段（源响应词汇，模块本地小闭集，issue #1673）：沪深港为
-/// 精确市场段，美股为聚合段 `us`（与请求键前缀同词汇）。`Us` 不是市场闭集
-/// 成员——美股精确市场由交易所后缀解析（见 [`us_market_from_suffix`]）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResponseKeyMarket {
     Sh,
@@ -219,7 +132,6 @@ enum ResponseKeyMarket {
 }
 
 impl ResponseKeyMarket {
-    /// 源词汇拼写（错误信息用）。
     const fn as_str(self) -> &'static str {
         match self {
             ResponseKeyMarket::Sh => "sh",
@@ -229,7 +141,6 @@ impl ResponseKeyMarket {
         }
     }
 
-    /// 沪深港市场段的精确市场（市场闭集成员）；美股聚合段无对应成员。
     const fn precise_market(self) -> Option<Market> {
         match self {
             ResponseKeyMarket::Sh => Some(Market::Sh),
@@ -240,7 +151,6 @@ impl ResponseKeyMarket {
     }
 }
 
-/// 报文键前缀 →（响应键市场段，字段布局）。未知前缀返回 None（非预期响应）。
 fn quote_layout(key: &str) -> Option<(ResponseKeyMarket, QuoteLayout)> {
     let market = if key.len() > 2 && key.starts_with("sh") {
         ResponseKeyMarket::Sh
@@ -254,20 +164,16 @@ fn quote_layout(key: &str) -> Option<(ResponseKeyMarket, QuoteLayout)> {
         return None;
     };
     let layout = match market {
-        // A 股：类型码 61（`GP-A` / `ETF` / `LOF` / `ZQ-KZZ`）、币种 82（CNY）、88 字段。
         ResponseKeyMarket::Sh | ResponseKeyMarket::Sz => QuoteLayout {
             kind_index: 61,
             currency_index: 82,
             min_fields: 88,
         },
-        // 港股：类型码 63（`GP`）、币种 75（HKD）、78 字段。
         ResponseKeyMarket::Hk => QuoteLayout {
             kind_index: 63,
             currency_index: 75,
             min_fields: 78,
         },
-        // 美股：类型码 56（`GP` / `GP-ETF`）、币种 35（USD）、73 字段；交易所后缀在
-        // 回显代码字段（下标 2）内。
         ResponseKeyMarket::Us => QuoteLayout {
             kind_index: 56,
             currency_index: 35,
@@ -277,20 +183,8 @@ fn quote_layout(key: &str) -> Option<(ResponseKeyMarket, QuoteLayout)> {
     Some((market, layout))
 }
 
-/// 单元标识（取数尾部契约的 `source` 日志字段）：源畸形 warn 按此分源 grep。
 const SOURCE: &str = "tencent-batch-quote";
 
-/// 解析腾讯批量报价报文（GBK 已解码的文本）为按响应序的报价序列，失败回
-/// `Err(detail)`（失败原因保留在错误详情，由取数尾部契约统一入日志）。
-///
-/// 逐条 `v_<键>="<字段串>";` 语句解析；`v_pv_none_match`（数据源明示「批量内全部
-/// 代码无效」）忽略。fail-closed：整段无任何报价语句（风控 HTML 页 / 空体）、未知
-/// 市场前缀、字段数少于该市场布局下界（布局漂移 / 截断）一律报错；空名称/空代码行
-/// 按无效行丢弃。零命中（只有 `pv_none_match`）返回空序列，是可信结果。
-///
-/// 字段数偏少是**整批**报错而非丢单行：布局漂移会让全部行同形缩短，丢单行会把
-/// 「数据源改版」静默伪装成「这只今天缺行情」；空名称则是字段自身的合法缺值
-///（与既有行情解析丢弃空名行同口径），两者性质不同。
 pub(super) fn parse_tencent_quotes(body: &str) -> std::result::Result<Vec<TencentQuote>, String> {
     let mut quotes = Vec::new();
     let mut saw_statement = false;
@@ -321,8 +215,6 @@ pub(super) fn parse_tencent_quotes(body: &str) -> std::result::Result<Vec<Tencen
     Ok(quotes)
 }
 
-/// 单条报价语句 → [`TencentQuote`]。空名称/空代码行返回 `Ok(None)`（无效行丢弃）；
-/// 美股缺交易所后缀或后缀未收录返回 `Err(detail)`（fail-closed，不猜市场）。
 fn build_quote(
     key_market: ResponseKeyMarket,
     fields: &[&str],
@@ -333,8 +225,6 @@ fn build_quote(
     if name.is_empty() || echo_code.is_empty() {
         return Ok(None);
     }
-    // 响应市场 = 沪深港取键市场段、美股取自报交易所后缀（源词汇 → 市场闭集的
-    // 解析点，产出类型化市场，issue #1673）。
     let (code, market) = match key_market.precise_market() {
         Some(market) => (echo_code.to_string(), market),
         None => {
@@ -355,21 +245,16 @@ fn build_quote(
     }))
 }
 
-/// 按下标取字段（越界回空串；布局下界已在解析入口拦截，此处只作防御）。
 fn field<'a>(fields: &[&'a str], index: usize) -> &'a str {
     fields.get(index).copied().unwrap_or("")
 }
 
-/// 美股回显代码（`AAPL.OQ`）→（裸 ticker，交易所后缀）。缺后缀即非预期形态。
 fn split_us_code(echo_code: &str) -> std::result::Result<(&str, &str), String> {
     echo_code
         .rsplit_once('.')
         .ok_or_else(|| format!("美股报价缺少交易所后缀：{echo_code}"))
 }
 
-/// 交易所后缀 → 市场闭集三值（ADR-0081 决策 2）：`.OQ` 纳斯达克 / `.N` 纽交所 /
-/// `.AM` 美交所。这是「数据源自报词汇 → 市场闭集」的解析点（issue #1673，产出
-/// 类型化市场）。未收录后缀 fail-closed——静默丢弃会少一只，猜值会错挂市场。
 fn us_market_from_suffix(suffix: &str) -> std::result::Result<Market, String> {
     match suffix {
         "OQ" => Ok(Market::Nasdaq),
@@ -379,8 +264,6 @@ fn us_market_from_suffix(suffix: &str) -> std::result::Result<Market, String> {
     }
 }
 
-/// 从报文体里取出全部 `v_<键>="<字段串>"` 语句（键与字段串均不含引号）。报文按行
-/// 分隔也可能同行多条，故按 `v_` 起点扫描而非按行切分；畸形片段跳过，不中断后续。
 fn quote_statements(body: &str) -> Vec<(&str, &str)> {
     let mut statements = Vec::new();
     let mut cursor = 0usize;
@@ -400,10 +283,6 @@ fn quote_statements(body: &str) -> Vec<(&str, &str)> {
     statements
 }
 
-/// 拉取一批腾讯行情报价（分批，单请求最多 [`TENCENT_QUOTE_BATCH_SIZE`] 只），
-/// 合并各批结果为按请求序的报价序列。查询单元市场是可路由子集
-/// `QuoteMarket`（issue #1673），键构造是全函数——没有「构造不出键被跳过」
-/// 的查询单元。
 pub(super) async fn fetch_tencent_quotes(
     client: &reqwest::Client,
     pacer: &mut Pacer,
@@ -421,10 +300,6 @@ pub(super) async fn fetch_tencent_quotes(
     Ok(quotes)
 }
 
-/// 单批请求：请求行 `GET /q=<代码逗号串>`（无 Referer），GBK 解码后按
-/// [`parse_tencent_quotes`] 解析。解码失败与形状判据失败同走取数尾部契约
-///（[`super::source_tail::finish`]：统一截断 warn → 补降速信号 → 专码映射，
-/// spec #1675）。按代码查询的单只取数（#1567）复用本请求原语：单只 = 一批一条。
 pub(super) async fn fetch_tencent_batch(
     client: &reqwest::Client,
     pacer: &mut Pacer,
@@ -444,9 +319,6 @@ pub(super) async fn fetch_tencent_batch(
         None,
     )
     .await?;
-    // GBK 解码与报文形状两道判据都归契约（spec #1675）：单元只出解码闭包、解析
-    // 闭包与错误映射；降速信号由契约结构性补上（ADR-0121 决策 5），截断片段取
-    // 解码后的响应文本（解码失败时才有损转换兕底）。
     source_tail::finish(
         SOURCE,
         &bytes,
@@ -457,10 +329,6 @@ pub(super) async fn fetch_tencent_batch(
     )
 }
 
-/// 源畸形的码化错误映射（spec #1675 裁决 3：用户可见的源畸形一律专码）：
-/// 按代码查询 / 现价刷新的失败直达调用方，报本单元专码、入同族文案；解析
-/// detail（「响应不可解析：{detail}」的 detail）退出用户面、留日志（ADR-0050
-/// 决策 1：wire 只增字段）。无参形状对齐既有专码族——params 须 locale 无关。
 fn quote_source_malformed() -> AppError {
     AppError::coded(
         "sync.quote-source-malformed",

@@ -5,15 +5,9 @@ use ledger_sync_protocol::device::device_id;
 use super::model::{Category, CategoryInput, ReorderItem};
 
 fn setup() -> rusqlite::Connection {
-    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
-    // 工厂住根包（tauri_app_lib），经 dev-dependency 环消费（本 crate Cargo.toml
-    // 注释留痕）；本域无接缝静态，直接驱动本实例与根包图实例等价（lib.rs
-    // 「测试实例纪律」段）。
     tauri_app_lib::test_support::open()
 }
 
-/// 读回统一走域公开函数（变异测试清理 2026-10 首轮：原私有裸 SQL helper 使
-/// 全部读回断言穿透不到 `list_categories`，该函数固定值替换变异无测试可杀）。
 fn list_categories(conn: &rusqlite::Connection) -> Vec<Category> {
     super::list_categories(conn, false).unwrap()
 }
@@ -48,8 +42,6 @@ fn create_category_inserts_and_returns_id() {
         .find(|c| c.id == id)
         .expect("公开读回必须含新建行");
     assert_eq!(created.name, "交通");
-    // 读回投影：在用行的 is_deleted 必须读出 false（from_row 布尔反转变异的
-    // 击杀点，变异测试报告 2026-10 首轮）。
     assert!(!created.is_deleted);
 }
 
@@ -81,9 +73,6 @@ fn create_subcategory_with_parent() {
     assert_eq!(child.parent_id.as_deref(), Some(&*parent_id));
 }
 
-/// 幂等创建（HTTP 导入面，供 AI 导入即建）：同自然键（name + kind + parent_id）
-/// 已存在时复用已有 id、不重复插入。击杀面：create_category_idempotent 与
-/// find_category_by_natural_key 的固定值替换变异（变异测试报告，2026-10 首轮清理）。
 #[test]
 fn create_category_idempotent_reuses_natural_key() {
     let conn = setup();
@@ -104,7 +93,6 @@ fn create_category_idempotent_reuses_natural_key() {
         )
         .unwrap();
     assert_eq!(count, 1, "幂等命中不得重复插入");
-    // 返回值必须指向真实行（固定值替换变异的击杀面）。
     let row_id: String = conn
         .query_row(
             "SELECT id FROM categories WHERE name='餐饮' AND is_deleted=0",
@@ -171,8 +159,6 @@ fn delete_category_returns_not_found_for_already_deleted() {
         "已删除分类应再次返回 404"
     );
 }
-
-// ----- 预算删除守卫（issue #355）-----
 
 fn insert_expense_category_row(
     conn: &rusqlite::Connection,
@@ -282,15 +268,10 @@ fn update_category_updates_fields() {
     assert_eq!(updated.icon.as_deref(), Some("🍕"));
 }
 
-/// 更新入参的三态在 wire 上必须分开（issue #1327 范围外修复）：编辑弹窗送
-/// `parent_id: null` 表达「无父分类」，但 serde 对 `Option<Option<String>>` 默认把
-/// 「值为 null」与「键缺席」折叠成同一个 `None`——那样「提升为顶级分类」静默不生效
-/// （弹窗却提示已更新）。本断言就是那条区分器的哨兵：删掉 `deserialize_with` 即红。
 #[test]
 fn category_update_input_distinguishes_null_from_missing_fields() {
     use super::model::CategoryUpdateInput;
 
-    // 父分类：`null` = 提升为顶级分类、键缺席 = 不改、给值 = 落定该父
     let cleared: CategoryUpdateInput = serde_json::from_str(r#"{"parent_id":null}"#).unwrap();
     assert_eq!(
         cleared.parent_id,
@@ -302,7 +283,6 @@ fn category_update_input_distinguishes_null_from_missing_fields() {
     let set: CategoryUpdateInput = serde_json::from_str(r#"{"parent_id":"cat-1"}"#).unwrap();
     assert_eq!(set.parent_id, Some(Some("cat-1".to_string())));
 
-    // 图标：同款三态（`null` = 清空图标）
     let icon_cleared: CategoryUpdateInput = serde_json::from_str(r#"{"icon":null}"#).unwrap();
     assert_eq!(icon_cleared.icon, Some(None), "显式 null = 清空图标");
     let icon_untouched: CategoryUpdateInput = serde_json::from_str("{}").unwrap();
@@ -311,8 +291,6 @@ fn category_update_input_distinguishes_null_from_missing_fields() {
     assert_eq!(icon_set.icon, Some(Some("🍕".to_string())));
 }
 
-/// 三态的行为面（经公开写入口）：`Some(None)` 清空图标（编辑弹窗把图标输入框清空
-/// 后送 `null`），而键缺席（`None`）不得抹掉既有图标。
 #[test]
 fn update_category_clears_icon_with_explicit_none() {
     use super::model::{CategoryInput, CategoryUpdateInput};
@@ -342,7 +320,6 @@ fn update_category_clears_icon_with_explicit_none() {
     .unwrap();
     assert_eq!(icon_of(&conn, &id), None, "显式清空即无图标");
 
-    // 键缺席 = 不改：只改名不得抹掉图标
     super::update_category(
         &conn,
         &id,
@@ -366,7 +343,6 @@ fn update_category_clears_icon_with_explicit_none() {
     assert_eq!(icon_of(&conn, &id).as_deref(), Some("🍜"));
 }
 
-/// 分类图标（未设置返回 `None`）。
 fn icon_of(conn: &rusqlite::Connection, id: &str) -> Option<String> {
     conn.query_row(
         "SELECT icon FROM categories WHERE id=?1",
@@ -376,8 +352,6 @@ fn icon_of(conn: &rusqlite::Connection, id: &str) -> Option<String> {
     .unwrap()
 }
 
-/// 三态的行为面（经公开写入口）：`Some(None)` 把子分类提升为顶级分类，
-/// 而 `None`（不改）不能把已有的父子关系弄丢。
 #[test]
 fn update_category_promotes_child_to_top_level_with_explicit_none() {
     use super::model::{CategoryInput, CategoryUpdateInput};
@@ -420,7 +394,6 @@ fn update_category_promotes_child_to_top_level_with_explicit_none() {
     .unwrap();
     assert_eq!(parent_id_of(&conn, &child), None, "显式清空即顶级分类");
 
-    // 挂回去后只改名（`parent_id` 键缺席）：父子关系不得被动掉
     super::update_category(
         &conn,
         &child,
@@ -447,7 +420,6 @@ fn update_category_promotes_child_to_top_level_with_explicit_none() {
     );
 }
 
-/// 分类的父分类 id（未设置返回 `None`）。
 fn parent_id_of(conn: &rusqlite::Connection, id: &str) -> Option<String> {
     conn.query_row(
         "SELECT parent_id FROM categories WHERE id=?1",
@@ -481,8 +453,6 @@ fn reorder_categories_sets_sort_order() {
     )
     .unwrap();
 
-    // 重排走公开入口（变异测试清理 2026-10 首轮：原手写 UPDATE 不经被测函数，
-    // reorder 路径 no-op 变异全存活）。
     super::reorder_categories(
         &conn,
         vec![

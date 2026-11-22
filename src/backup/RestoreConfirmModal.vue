@@ -10,22 +10,9 @@ import {
   type RestoreIntent,
 } from "@/backup/useBackup";
 
-// 恢复确认弹窗（issue #572 / ADR-0075 决策 7；#602 起为共享组件，失败恢复屏
-// 复用同一加密语义面）：从原生 confirm 对话框升级为应用内弹窗，承载两件加密语义面——
-// - 跨模式警告：当前库模式与备份模式不一致时显著警告（恢复后加密模式随文件走，
-//   重启由启动探测接管实际模式）；
-// - 密文备份主口令：备份为密文时输入备份所在库的主口令以校验并恢复；口令错误
-//   不关弹窗、可就地重试（解锁同语义，ADR-0075 决策 5）。
-// 上下文口令自动试开（issue #602/#603）：意图携带 contextPassphrase 时（宿主
-// 上下文已有可用口令，如解锁屏手输过的主口令），确认先自动试开；失败才显出
-// 口令框重输。失败恢复屏（明文损坏场景）不携带上下文口令，直接弹口令框。
-// 弹层纪律：AppModal 收口关闭语义（遮罩不关）并接入弹层注册表（快捷键抑制）。
 const props = defineProps<{
-  /** 弹窗意图（null = 关闭终态，ADR-0072：非空即显示）。 */
   intent: RestoreIntent | null;
-  /** 意图序号（重开触发表单重置的凭据）。 */
   seq: number;
-  /** 确认回调（useBackup.confirmRestore）：成功 resolve（父层关意图 + 重启），失败 reject（弹窗内展示、可重试）。 */
   onConfirm: (passphrase: string) => Promise<void>;
 }>();
 
@@ -33,12 +20,9 @@ const emit = defineEmits<{ close: [] }>();
 
 const passphrase = ref("");
 const submitting = ref(false);
-/** 弹窗内错误提示（口令错误等）：保持弹窗打开供修改重试。 */
 const error = ref<string | null>(null);
-/** 后端探测实际密文而元数据未标记（异常产物）时，按需显出口令输入——以后端探测为准。 */
 const passphraseRevealedByError = ref(false);
 
-// 每次意图落位（新对象）重置输入与错误，迟到的旧错误不残留。
 watch(
   () => props.seq,
   () => {
@@ -48,7 +32,6 @@ watch(
   },
 );
 
-/** 跨模式警告文案：同模式为空（不渲染警告位）。 */
 const warningText = computed(() => {
   if (!props.intent) return "";
   const key = restoreCrossModeWarningKey(
@@ -58,11 +41,9 @@ const warningText = computed(() => {
   return key ? t(key) : "";
 });
 
-/** 宿主上下文口令（#602/#603）：存在时确认先自动试开，失败才显出口令框。 */
 const contextPassphrase = computed(() => props.intent?.contextPassphrase ?? "");
 const hasContextPassphrase = computed(() => contextPassphrase.value.length > 0);
 
-/** 密文备份需主口令；口令未输时确认禁用。后端探测报需口令错误时按需显出。 */
 const needsPassphrase = computed(() => props.intent?.backupEncrypted ?? false);
 const showPassphrase = computed(
   () => (needsPassphrase.value && !hasContextPassphrase.value) || passphraseRevealedByError.value,
@@ -75,15 +56,11 @@ async function confirm() {
   if (!canSubmit.value || !props.intent) return;
   submitting.value = true;
   error.value = null;
-  // 提交口令：口令框显出时用输入值；否则用上下文口令自动试开（无上下文且
-  // 无需口令的明文备份不消费口令，传空与既有行为一致）。
   const attempt = showPassphrase.value ? passphrase.value : contextPassphrase.value;
   try {
     await props.onConfirm(attempt);
   } catch (e) {
     error.value = errorMessage(e);
-    // 密文备份（含上下文口令试开失败）与后端探测报需口令：显出口令输入让
-    // 用户就地重输重试，而不是卡死在无输入框的错误提示上。
     if (needsPassphrase.value || errorCodeOf(e) === BACKUP_PASSPHRASE_REQUIRED) {
       passphraseRevealedByError.value = true;
     }

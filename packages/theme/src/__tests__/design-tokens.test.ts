@@ -2,9 +2,6 @@ import { describe, expect, it } from "vitest";
 import { DARK_FLOAT_LAYER, NEUTRAL_TOKENS } from "../design-tokens";
 import { darkOverrides, lightOverrides } from "../overrides";
 
-/** 中性 Design Tokens 单一来源与派生一致性（issue #887 / ADR-0093）。
- * 行为保持重构：亮暗视觉口径零变化；派生一致性断言防覆盖回退为手工副本。 */
-
 describe("NEUTRAL_TOKENS（中性令牌单一来源）", () => {
   it("暗色定案取值与现状视觉语言一致（近黑底、微分层、细边框、克制圆角）", () => {
     expect(NEUTRAL_TOKENS.dark).toEqual({

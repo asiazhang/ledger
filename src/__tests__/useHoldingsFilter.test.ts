@@ -18,10 +18,6 @@ import {
 import type { PortfolioRow } from "@/investment/usePortfolioOverview";
 import type { Account } from "@ledger/types";
 
-// ---------------------------------------------------------------------------
-// 夹具：四行持仓，覆盖两账户 / 三币种 / 缺价行 / 中英文名称
-// ---------------------------------------------------------------------------
-
 function makeRow(partial: Partial<PortfolioRow> & { holdingId: string }): PortfolioRow {
   return {
     accountId: "acc-inv-1",
@@ -45,7 +41,6 @@ function makeRow(partial: Partial<PortfolioRow> & { holdingId: string }): Portfo
   };
 }
 
-/** h2 无行情（全 null 金额）——缺价行语义的常驻样本；native 列为后端当期汇率折算值（issue #1797） */
 const FIXTURE_ROWS: PortfolioRow[] = [
   makeRow({
     holdingId: "h1",
@@ -86,10 +81,6 @@ const FIXTURE_ROWS: PortfolioRow[] = [
 
 const ids = (rows: PortfolioRow[]) => rows.map((r) => r.holdingId);
 
-// ---------------------------------------------------------------------------
-// 纯函数：排序语义（null 恒排末尾、多币种数值直比、默认代码字母序）
-// ---------------------------------------------------------------------------
-
 describe("sortHoldings 排序语义", () => {
   it("无排序状态时按标的代码字母序，缺代码行恒排末尾", () => {
     const rows = [
@@ -120,7 +111,6 @@ describe("sortHoldings 排序语义", () => {
   });
 
   it("多币种混合时金额列为数值直比（账户本位币不做汇率折算，已接受代价）", () => {
-    // h1 = 150000 分(CNY)、h4 = 500000 分(USD)：直比分值 150000 < 500000，不做任何折算
     const rows = [FIXTURE_ROWS[0]!, FIXTURE_ROWS[3]!];
     expect(ids(sortHoldings(rows, { columnKey: "market_value", order: "ascend" }))).toEqual([
       "h1",
@@ -138,10 +128,6 @@ describe("sortHoldings 排序语义", () => {
     expect(ids(rows)).toEqual(["h1", "h2", "h3", "h4"]);
   });
 });
-
-// ---------------------------------------------------------------------------
-// 纯函数：模糊匹配语义（统一模糊搜索语义规格，判定目标「代码 · 名称」等价文本）
-// ---------------------------------------------------------------------------
 
 describe("holdingsSearchLabel / holdingMatchesSearch 匹配语义", () => {
   it("判定目标为「代码 · 名称」等价文本，无名称退化为裸代码，两者皆缺为空文本", () => {
@@ -163,7 +149,6 @@ describe("holdingsSearchLabel / holdingMatchesSearch 匹配语义", () => {
   });
 
   it("按拼音首字母子序列命中", () => {
-    // 浦发银行 → pfyh；腾讯控股 → txkg
     expect(holdingMatchesSearch(FIXTURE_ROWS[0]!, "pfyh")).toBe(true);
     expect(holdingMatchesSearch(FIXTURE_ROWS[2]!, "txkg")).toBe(true);
   });
@@ -201,11 +186,6 @@ describe("filterHoldings 过滤语义", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 工厂形态 composable：过滤意图进、可观察状态与派生合计出（零 IPC 触达）
-// ---------------------------------------------------------------------------
-
-/** 账户下拉同源夹具：投资账户谓词收口（cash 不进选项面；夹具归 makeAccount 工厂） */
 const FILTER_ACCOUNTS: Account[] = [
   makeAccount({ id: "acc-cash", name: "现金", type: "cash" }),
   makeAccount({ id: "acc-inv-1", name: "A股账户" }),
@@ -240,7 +220,6 @@ describe("useHoldingsFilter 工厂", () => {
   it("默认态：全量行按代码字母序，合计为全量口径（折本位币单值、缺价行不计入并计数）", () => {
     const hf = setup(FIXTURE_ROWS);
     expect(ids(hf.filteredRows.value)).toEqual(["h2", "h3", "h1", "h4"]);
-    // 折本位币单值（issue #1797）：h1 150000 + h3 1850000 + h4 3600000（h2 缺价跳过并计数）
     expect(hf.statCards.value.marketValue).toEqual({
       cents: 5600000,
       missingPriceCount: 1,
@@ -259,7 +238,6 @@ describe("useHoldingsFilter 工厂", () => {
     const hf = setup(FIXTURE_ROWS);
     hf.setSearch("txkg");
     expect(hf.searchInput.value).toBe("txkg");
-    // 防抖窗口内行集合未变
     expect(ids(hf.filteredRows.value)).toHaveLength(4);
     vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
     await flushPromises();
@@ -282,13 +260,12 @@ describe("useHoldingsFilter 工厂", () => {
   it("合计随过滤子集更新（搜索 × 账户），排序不影响合计", async () => {
     const hf = setup(FIXTURE_ROWS);
     hf.setAccount("acc-inv-2");
-    expect(hf.statCards.value.marketValue.cents).toBe(5450000); // h3 1850000 + h4 3600000
+    expect(hf.statCards.value.marketValue.cents).toBe(5450000);
     hf.setSearch("txkg");
     vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
     await flushPromises();
     expect(hf.statCards.value.marketValue.cents).toBe(1850000);
 
-    // 排序只是重排行，不是换口径：合计不动
     hf.setSorter({ columnKey: "market_value", order: "descend" });
     expect(ids(hf.filteredRows.value)).toEqual(["h3"]);
     expect(hf.statCards.value.marketValue.cents).toBe(1850000);
@@ -298,7 +275,6 @@ describe("useHoldingsFilter 工厂", () => {
     const hf = setup(FIXTURE_ROWS);
     hf.setSorter({ columnKey: "market_value", order: "ascend" });
     expect(ids(hf.filteredRows.value)).toEqual(["h1", "h4", "h3", "h2"]);
-    // 再点同列切降序；order=false（第三态）清除排序回默认
     hf.setSorter({ columnKey: "market_value", order: false });
     expect(ids(hf.filteredRows.value)).toEqual(["h2", "h3", "h1", "h4"]);
   });
@@ -322,7 +298,6 @@ describe("useHoldingsFilter 工厂", () => {
     });
     await useReferenceStore().refresh();
     const session = useInvestmentsSessionStore();
-    // 会话保留值指向刚归档的账户（跨页保留的筛选态）
     session.setAccount("acc-inv-arch");
     const hf = setup(FIXTURE_ROWS);
     expect(hf.accountOptions.value).toEqual([
@@ -330,7 +305,6 @@ describe("useHoldingsFilter 工厂", () => {
       { label: "A股账户", value: "acc-inv-1" },
       { label: "港美账户", value: "acc-inv-2" },
     ]);
-    // 清掉筛选后回落新选择面：归档账户不出现（补值只服务于已存值）
     session.setAccount(null);
     expect(hf.accountOptions.value.map((o) => o.value)).toEqual(["acc-inv-1", "acc-inv-2"]);
   });
@@ -338,8 +312,6 @@ describe("useHoldingsFilter 工厂", () => {
   it("零 IPC 触达：过滤全在前端内存完成，行数据归调用方供给", async () => {
     setup(FIXTURE_ROWS);
     await flushPromises();
-    // 参考字典五命令是参考 store 自举（账户下拉选项面），其余命令一律不触达——
-    // 尤其 list_holdings / list_instruments 不经本模块
     const nonReferenceCmds = mockInvoke.mock.calls
       .map(([cmd]) => cmd)
       .filter((cmd) => !(cmd in REFERENCE_DEFAULTS));
@@ -347,17 +319,9 @@ describe("useHoldingsFilter 工厂", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 页码生命周期（issue #912）：分页是过滤排序之后派生行集的展示切片，不是第四
-// 个过滤维度——本模块只持页码状态与「翻页归零」语义，切片由表格组件内置分页
-// 完成（NDataTable 客户端模式）。
-// ---------------------------------------------------------------------------
-
 describe("useHoldingsFilter 页码生命周期（issue #912）", () => {
   let scope: ReturnType<typeof effectScope> | undefined;
 
-  /** 多页夹具（45 行：acc-inv-1 30 行 / acc-inv-2 15 行，均超一页）——页码
-   * 「在范围内」才有意义（issue #1192 起模块对越界页码钳制到有效范围）。 */
   const MULTI_PAGE_ROWS: PortfolioRow[] = Array.from({ length: 45 }, (_, i) =>
     makeRow({
       holdingId: `mp-${i}`,
@@ -406,12 +370,10 @@ describe("useHoldingsFilter 页码生命周期（issue #912）", () => {
   it("搜索以防抖后应用时点归零：回显不归零，应用收窄行集才归零", async () => {
     const hf = setup(MULTI_PAGE_ROWS);
     hf.page.value = 2;
-    // 输入回显阶段应用值未变、行集未动，不翻页
     hf.setSearch("01");
     expect(hf.page.value).toBe(2);
     vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
     await flushPromises();
-    // 应用搜索收窄行集，页码归零（与行集变化同步）
     expect(hf.page.value).toBe(1);
   });
 
@@ -430,17 +392,11 @@ describe("useHoldingsFilter 页码生命周期（issue #912）", () => {
     hf.setAccount("acc-inv-1");
     hf.setSorter({ columnKey: "market_value", order: "descend" });
     hf.page.value = 2;
-    // 与当前值相同的账户/排序重设：行集未变，页码保持
     hf.setAccount("acc-inv-1");
     hf.setSorter({ columnKey: "market_value", order: "descend" });
     expect(hf.page.value).toBe(2);
   });
 });
-
-// ---------------------------------------------------------------------------
-// 会话内保留的两条附加语义（issue #1192 Standards/Spec 轴 finding）：
-// 页码越界钳制写回保留态（ADR-0094 决策 3）、作用域销毁撤销在途搜索防抖。
-// ---------------------------------------------------------------------------
 
 describe("useHoldingsFilter 页码钳制与搜索防抖撤销（issue #1192）", () => {
   let scope: ReturnType<typeof effectScope> | undefined;
@@ -476,12 +432,10 @@ describe("useHoldingsFilter 页码钳制与搜索防抖撤销（issue #1192）",
     hf.page.value = 2;
     expect(hf.page.value).toBe(2);
 
-    // 行集缩到 1 页：钳制到第 1 页，并把保留态一并写回（不只钳展示）
     rows.value = many.slice(0, 5);
     expect(hf.page.value).toBe(1);
     expect(useInvestmentsSessionStore().holdingsPage).toBe(1);
 
-    // 行集回增到多页：保留态已是第 1 页 → 不跳回离开时的旧页码
     rows.value = many;
     expect(hf.page.value).toBe(1);
   });
@@ -491,10 +445,8 @@ describe("useHoldingsFilter 页码钳制与搜索防抖撤销（issue #1192）",
     const hf = setup(rows);
     hf.setSearch("txkg");
     expect(hf.searchInput.value).toBe("txkg");
-    // 卸载（页签切走）：撤销在途定时器
     scope!.stop();
     scope = undefined;
-    // 防抖窗口推进后应用值仍为空、回显回到应用值——输入未落地
     vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 2);
     const store = useInvestmentsSessionStore();
     expect(store.holdingsSearch).toBe("");

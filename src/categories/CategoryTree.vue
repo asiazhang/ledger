@@ -18,9 +18,6 @@ const emit = defineEmits<{ edit: [cat: Category] }>();
 const reference = useReferenceStore();
 const message = useMessage();
 
-// 拖拽排序是桌面专属管理动作（ADR-0088 决策 10，issue #849）：移动档隐藏入口
-//（树节点不可拖拽），移动档只读消费排序产出；桌面档照常。编辑/删除入口两档
-// 同在（生命周期操作不裁剪）。
 const windowTier = useWindowTier();
 const isMobileTier = computed(() => windowTier.value === "mobile");
 
@@ -36,7 +33,6 @@ const treeData = computed<TreeCategoryNode[]>(
     }) as unknown as TreeCategoryNode[],
 );
 
-// ── 自定义渲染 ──
 function renderIcon(name: string | null) {
   const Comp = getIconComponent(name);
   if (!Comp) return null;
@@ -90,7 +86,6 @@ function renderSuffix(info: { option: TreeOption }) {
   ]);
 }
 
-// ── 拖拽排序 ──
 async function handleDrop(info: TreeDropInfo) {
   const { node: targetNode, dragNode, dropPosition } = info;
   if (dropPosition === "inside") return;
@@ -115,18 +110,15 @@ async function handleDrop(info: TreeDropInfo) {
 
   try {
     await api.reorderCategories(siblings.map((c, i) => ({ id: c.id, sort_order: i })));
-    // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
     message.error(t("settings.categories.msg.sortFailed", { msg: errorMessage(e) }));
   }
 }
 
-// ── 删除 ──
 async function removeCategory(id: string) {
   try {
     await api.deleteCategory(id);
     message.success(t("settings.categories.msg.deleted"));
-    // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
     message.error(t("settings.categories.msg.deleteFailed", { msg: errorMessage(e) }));
   }

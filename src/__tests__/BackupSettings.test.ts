@@ -10,13 +10,10 @@ import BackupSettings from "@/settings/BackupSettings.vue";
 import { useAppStore } from "@/stores/app";
 import type { BackupFileInfo } from "@ledger/types";
 
-/** 按出现顺序取全部卡片标题（卡片顺序即页签内信息架构）。 */
 function cardTitles(wrapper: ReturnType<typeof mount>) {
   return wrapper.findAll(".n-card-header__main").map((c) => c.text());
 }
 
-// 剧本剪贴板（issue #653）：断言复制内容与成功/失败提示分支（父 spec 测试决策：
-// 组件测试中 mock 剪贴板对象，断言写入内容与成功提示）。
 const writeText = vi.fn().mockResolvedValue(undefined);
 
 const encryptedBackup: BackupFileInfo = {
@@ -41,7 +38,6 @@ const plaintextBackup: BackupFileInfo = {
   source_unknown: true,
 };
 
-/** 本机设备名下的第二份产物（清理弹窗待删数量只统计本设备桶，issue #1987）。 */
 const ownBackupSecond: BackupFileInfo = {
   ...encryptedBackup,
   file_name: "ledger-auto-20260216-093000-dev-this.db.zip",
@@ -49,7 +45,6 @@ const ownBackupSecond: BackupFileInfo = {
   encrypted: false,
 };
 
-/** 自动备份状态命令契约快照（本场景恒为已启用、从未执行、无连续失败）。 */
 const AUTO_BACKUP_ON = {
   enabled: true,
   last_backup_at: null,
@@ -60,7 +55,6 @@ const AUTO_BACKUP_ON = {
 beforeEach(() => {
   writeText.mockClear();
   Object.assign(navigator, { clipboard: { writeText } });
-  // 备份列表以配置目录为前提（未配置时列表恒空、不发 IPC）。
   useAppStore().setBackupDir("/Users/me/backups");
 });
 
@@ -76,12 +70,9 @@ describe("BackupSettings 备份列表加密列（issue #572 / ADR-0075 决策 7�
     await flushPromises();
 
     const html = wrapper.html();
-    // 列头存在（用户可见的「加密」列）。
     expect(html).toContain("加密");
-    // 锁形标记随标记显隐：密文行有图标（svg），明文行无。
     const icons = wrapper.findAll(".n-data-table-tr svg");
     expect(icons.length).toBe(1);
-    // 标记带可读名（title 提示「密文备份」）。
     expect(wrapper.html()).toContain("密文备份");
   });
 
@@ -107,13 +98,10 @@ describe("BackupSettings 来源设备徽标（issue #1985 / ADR-0144 跨端合�
     const wrapper = mount(BackupSettings);
     await flushPromises();
 
-    // 列头存在（用户可见的「来源设备」列）。
     expect(wrapper.html()).toContain("来源设备");
     const tags = wrapper.findAll(".n-data-table-tr .n-tag");
     expect(tags.length).toBe(2);
-    // 带设备水印的行：徽标展示设备标识本体。
     expect(tags[0].text()).toBe("dev-this");
-    // 缺水印（升级前旧产物）行：警示徽标 + 「未知来源」文案（用户可见信号）。
     expect(tags[1].text()).toBe("未知来源");
   });
 });
@@ -144,7 +132,6 @@ describe("BackupSettings 备份页签重排与危险视觉修正（issue #651 / 
 
     const alert = wrapper.find(".n-alert");
     expect(alert.exists()).toBe(true);
-    // 显著形态：带图标；内容保留「替换当前全部数据」加粗后果句。
     expect(alert.classes()).toContain("n-alert--show-icon");
     expect(alert.text()).toContain("替换当前全部数据");
     expect(alert.find("strong").exists()).toBe(true);
@@ -179,7 +166,6 @@ describe("BackupSettings 备份页签重排与危险视觉修正（issue #651 / 
       },
     });
     const wrapper = mount(BackupSettings);
-    // 首刷在途：按钮在场，先放行首次拉取。
     const refreshBtn = findButtonByTestId(wrapper, "backup-list-refresh");
     expect(refreshBtn.exists()).toBe(true);
     resolveList!();
@@ -187,7 +173,6 @@ describe("BackupSettings 备份页签重排与危险视觉修正（issue #651 / 
     expect(listCalls).toBe(1);
     expect(wrapper.html()).toContain("当前共 1 个备份");
 
-    // 用户在文件管理器手动放入另一个备份 → 点刷新 → 列表与磁盘一致。
     disk = [encryptedBackup, plaintextBackup];
     await findButtonByTestId(wrapper, "backup-list-refresh").trigger("click");
     resolveList!();
@@ -200,14 +185,11 @@ describe("BackupSettings 备份页签重排与危险视觉修正（issue #651 / 
 });
 
 describe("BackupSettings 手动清理确认弹窗（issue #652 / ADR-0078）", () => {
-  /** 清理弹窗布线：本机 2 份 + 未知来源 1 份、上限 1 —— 待删数量只统计本机
-   *  桶（issue #1987）：弹窗报 1 份（而非总数 3 份推的 2 份），与实际删除一致。 */
   function stubPruneConfirm() {
     wireInvokeSeam({
       defaults: {
         list_backups: [encryptedBackup, ownBackupSecond, plaintextBackup],
         get_auto_backup_state: AUTO_BACKUP_ON,
-        // 本机设备标识（issue #1987）：待删数量的比对基准。
         get_device_id: "dev-this",
         prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
       },
@@ -223,14 +205,11 @@ describe("BackupSettings 手动清理确认弹窗（issue #652 / ADR-0078）", (
     await findButton(wrapper, "立即清理")!.trigger("click");
     await flushPromises();
 
-    // warning 级形态（ADR-0078 决策 2）：琥珀警示块承载待删数量与不可恢复后果。
-    // 本机桶 2 份、上限 1 → 待删 1（总数 3 份推不出这个数——他端/未知来源不计入）。
     const alert = document.body.querySelector(".n-modal .n-alert");
     expect(alert, "警示块应存在").toBeTruthy();
     expect(document.body.textContent).toContain("将删除最旧的 1 个备份");
     expect(document.body.textContent).toContain("删除后不可恢复");
     expect(findBodyButtonByTestId("danger-confirm")!.classes()).toContain("n-button--warning-type");
-    // 未确认前零删除副作用
     expect(mockInvoke).not.toHaveBeenCalledWith("prune_backups", expect.anything());
   });
 
@@ -319,7 +298,6 @@ describe("BackupSettings 复制与访达定位通道（issue #653）", () => {
     });
     const wrapper = mount(BackupSettings);
     await flushPromises();
-    // 未备份前无复制入口（无路径可复制）。
     expect(findButtonByTestId(wrapper, "copy-last-backup-path").exists()).toBe(false);
 
     await findButton(wrapper, "一键备份")!.trigger("click");
@@ -346,7 +324,6 @@ describe("BackupSettings 复制与访达定位通道（issue #653）", () => {
     await findButton(wrapper, "一键备份")!.trigger("click");
     await flushPromises();
     writeText.mockRejectedValueOnce(new Error("剪贴板不可用"));
-    // 备份流程本身已有一次成功提示；复制失败后不应再增成功提示。
     const successBefore = messageApi.success.mock.calls.length;
     await findButtonByTestId(wrapper, "copy-last-backup-path").trigger("click");
     await flushPromises();
@@ -357,7 +334,6 @@ describe("BackupSettings 复制与访达定位通道（issue #653）", () => {
 });
 
 describe("BackupSettings 备份列表客户端切片分页（issue #1383）", () => {
-  /** 12 份受管备份：页大小 10 下两页（第二页余量 2 行），文件名内序号可辨识 */
   const PAGE_BACKUPS: BackupFileInfo[] = Array.from({ length: 12 }, (_, i): BackupFileInfo => {
     const seq = String(i).padStart(2, "0");
     const name = `ledger-auto-20260201-09${seq}00.db.zip`;
@@ -373,7 +349,6 @@ describe("BackupSettings 备份列表客户端切片分页（issue #1383）", ()
     };
   });
 
-  /** 点分页条页码项（.n-pagination-item 文本即页码；前后键无文本不参与匹配） */
   async function goToPage(wrapper: ReturnType<typeof mount>, page: number) {
     await wrapper
       .findAll(".n-pagination-item")
@@ -390,7 +365,6 @@ describe("BackupSettings 备份列表客户端切片分页（issue #1383）", ()
     await flushPromises();
 
     expect(wrapper.find(".n-pagination").exists()).toBe(true);
-    // 计数在切片前判定：显示全量 12，与可见页无关
     expect(wrapper.html()).toContain("当前共 12 个备份");
     expect(wrapper.findAll("tbody tr")).toHaveLength(10);
     expect(wrapper.findAll("tbody tr")[0].text()).toContain(PAGE_BACKUPS[0].file_name);
@@ -431,7 +405,6 @@ describe("BackupSettings 备份列表客户端切片分页（issue #1383）", ()
 
     await findButtonByTestId(wrapper, "backup-list-refresh").trigger("click");
     await flushPromises();
-    // 数据重拉不是过滤意图：保持当前页（新备份的可见反馈由「最近备份」行承担）
     expect(wrapper.findAll("tbody tr")).toHaveLength(2);
     expect(wrapper.findAll(".n-pagination-item--active").map((el) => el.text())).toEqual(["2"]);
   });
@@ -447,18 +420,15 @@ describe("BackupSettings 备份列表客户端切片分页（issue #1383）", ()
     await goToPage(wrapper, 2);
     expect(wrapper.findAll("tbody tr")).toHaveLength(2);
 
-    // 文件管理器手动删文件后刷新：行集缩到 5（单页），原页码 2 已越界
     disk = PAGE_BACKUPS.slice(0, 5);
     await findButtonByTestId(wrapper, "backup-list-refresh").trigger("click");
     await flushPromises();
-    // 回落到有效范围：不落空页、不留陈旧页码；单页分页条收起
     expect(wrapper.findAll("tbody tr")).toHaveLength(5);
     expect(wrapper.find(".n-pagination").exists()).toBe(false);
   });
 });
 
 describe("BackupSettings 自动备份连续失败提示（issue #1456）", () => {
-  /** 连续失败达阈值的自动备份状态（提示态）。 */
   const AUTO_STATE_FAILING = {
     enabled: true,
     last_backup_at: null,
@@ -495,7 +465,6 @@ describe("BackupSettings 自动备份连续失败提示（issue #1456）", () =>
     await flushPromises();
     expect(wrapper.find('[data-testid="auto-backup-failure-alert"]').exists()).toBe(true);
 
-    // 后端一次成功备份：计数清零、提示态解除 → 信号到达刷新后提示消失。
     state = AUTO_BACKUP_ON;
     readFire()?.();
     await flushPromises();

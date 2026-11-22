@@ -1,11 +1,3 @@
-//! 标的搜索 HTTP 端点（`GET /api/v1/instruments`，issue #294 / ADR-0037）。
-//!
-//! 只断言外部行为：统一模糊搜索命中语义（代码/名称子串、拼音首字母、词条 AND、
-//! 大小写不敏感）、`limit` 封顶返回与命中总数、缺省/空 `query` 返回 400、
-//! `market`/`type` 过滤（同码异类型消歧）、完整 Instrument 形状与 symbol 排序、
-//! 开放 API 契约自描述。标的经核心创建接缝直接入字典（幂等创建端点属 issue #296，
-//! 本文件不依赖）。
-
 use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
@@ -18,7 +10,6 @@ use ledger_investment::{InstrumentInput, InstrumentType};
 
 use crate::common::{body_to_bytes, get_json, setup_app};
 
-/// 经核心创建接缝直接入字典（不发行情、不涉同步；币种固定 CNY 与断言无关）。
 fn seed_instrument(
     conn: &Arc<Mutex<Connection>>,
     symbol: &str,
@@ -40,7 +31,6 @@ fn seed_instrument(
     .unwrap();
 }
 
-/// 批量播种共享代码前缀的标的（symbol = `{prefix}{零填充序号}`）。
 fn seed_symbol_series(conn: &Arc<Mutex<Connection>>, prefix: &str, count: usize) {
     for i in 1..=count {
         seed_instrument(
@@ -53,7 +43,6 @@ fn seed_symbol_series(conn: &Arc<Mutex<Connection>>, prefix: &str, count: usize)
     }
 }
 
-/// query 词的百分号编码（中文/空格在 URI 中须编码；axum Query 负责解码）。
 fn q(term: &str) -> String {
     let mut out = String::new();
     for b in term.bytes() {
@@ -72,10 +61,6 @@ fn items_of_body(body: &serde_json::Value) -> &[serde_json::Value] {
         .as_array()
         .expect("应返回 {items, total} 结构")
 }
-
-// ---------------------------------------------------------------------------
-// 命中语义（统一模糊搜索，ADR-0027）
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_search_hits_by_symbol_substring_and_name_substring() {
@@ -102,7 +87,6 @@ async fn test_search_hits_by_symbol_substring_and_name_substring() {
         "hk",
     );
 
-    // 代码子串命中
     let (status, body) = get_json(&app, "/api/v1/instruments?query=600519").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 1);
@@ -110,7 +94,6 @@ async fn test_search_hits_by_symbol_substring_and_name_substring() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["symbol"], "600519");
 
-    // 名称子串命中（迁移流水里通常只有名称没有代码）
     let (status, body) = get_json(&app, &format!("/api/v1/instruments?query={}", q("茅台"))).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 1);
@@ -136,7 +119,6 @@ async fn test_search_hits_by_pinyin_initials() {
         "hk",
     );
 
-    // 拼音首字母子序列命中：贵州茅台 → gzmt、腾讯控股 → txkg
     for (term, symbol) in [("gzmt", "600519"), ("txkg", "00700")] {
         let (status, body) = get_json(&app, &format!("/api/v1/instruments?query={term}")).await;
         assert_eq!(status, StatusCode::OK);
@@ -144,7 +126,6 @@ async fn test_search_hits_by_pinyin_initials() {
         assert_eq!(items_of_body(&body)[0]["symbol"], symbol);
     }
 
-    // 大小写不敏感
     let (status, body) = get_json(&app, "/api/v1/instruments?query=GZMT").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 1);
@@ -162,7 +143,6 @@ async fn test_search_multi_terms_are_anded() {
     );
     seed_instrument(&conn, "000858", InstrumentType::Stock, Some("五粮液"), "sz");
 
-    // 「贵州 600519」两个词条都必须命中同一标的
     let uri = format!("/api/v1/instruments?query={}%20{}", q("贵州"), q("600519"));
     let (status, body) = get_json(&app, &uri).await;
     assert_eq!(status, StatusCode::OK);
@@ -186,10 +166,6 @@ async fn test_search_no_hit_returns_empty_items_with_zero_total() {
     assert_eq!(body["total"], 0);
     assert!(items_of_body(&body).is_empty());
 }
-
-// ---------------------------------------------------------------------------
-// 封顶返回与命中总数
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_search_default_limit_20_total_counts_all_hits() {
@@ -216,7 +192,6 @@ async fn test_search_limit_truncates_items_but_not_total() {
     assert_eq!(items_of_body(&body).len(), 5);
     assert_eq!(body["total"], 25);
 
-    // 小于 1 视为 1（下界收敛，行为锁）
     let (status, body) = get_json(&app, "/api/v1/instruments?query=CAP&limit=0").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(items_of_body(&body).len(), 1);
@@ -234,14 +209,8 @@ async fn test_search_limit_clamped_to_100() {
     assert_eq!(body["total"], 105);
 }
 
-// ---------------------------------------------------------------------------
-// query 必填（搜索式而非全量列表）
-// ---------------------------------------------------------------------------
-
 fn assert_bad_request(status: StatusCode, body: &serde_json::Value, what: &str) {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{what} 应返回 400");
-    // ADR-0050 码化收口（#1072）：入参条件带稳定码与逐字保留的中文原文，
-    // AI 导入按码自纠（HTTP 面是唯一消费方）。
     assert_eq!(body["kind"], "Invalid", "{what} kind 契约不变");
     assert_eq!(
         body["code"], "instrument.query-required",
@@ -298,33 +267,25 @@ async fn test_search_invalid_type_param_returns_400() {
     let _ = body_to_bytes(response.into_body()).await;
 }
 
-// ---------------------------------------------------------------------------
-// market / type 过滤
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_search_market_filter_narrows_hits() {
     let (app, conn) = setup_app();
     seed_instrument(&conn, "MKTAAA", InstrumentType::Stock, None, "sh");
     seed_instrument(&conn, "MKTBBB", InstrumentType::Stock, None, "hk");
 
-    // 不过滤：两条都命中
     let (status, body) = get_json(&app, "/api/v1/instruments?query=MKT").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 2);
 
-    // market 透传既有口径：精确过滤
     let (status, body) = get_json(&app, "/api/v1/instruments?query=MKT&market=hk").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 1);
     assert_eq!(items_of_body(&body)[0]["symbol"], "MKTBBB");
 
-    // 空串 market 视同未传（与既有接缝口径一致：空值不过滤）
     let (status, body) = get_json(&app, "/api/v1/instruments?query=MKT&market=").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 2);
 
-    // 无此市场的标的
     let (status, body) = get_json(&app, "/api/v1/instruments?query=MKT&market=us").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 0);
@@ -333,14 +294,11 @@ async fn test_search_market_filter_narrows_hits() {
 #[tokio::test]
 async fn test_search_type_filter_disambiguates_same_symbol() {
     let (app, conn) = setup_app();
-    // 同码异类型：基金 000001 vs 股票 000001（spec 例）
     seed_instrument(
         &conn,
         "000001",
         InstrumentType::Fund,
         Some("华夏成长混合"),
-        // fund 市场恒 unknown（ADR-0038 / issue #1194）：种子须走合法形态，
-        // 本用例断言的类型消歧与市场值无关。
         "unknown",
     );
     seed_instrument(
@@ -351,12 +309,10 @@ async fn test_search_type_filter_disambiguates_same_symbol() {
         "sz",
     );
 
-    // 不过滤：两行并返
     let (status, body) = get_json(&app, "/api/v1/instruments?query=000001").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 2);
 
-    // type=fund 消歧
     let (status, body) = get_json(&app, "/api/v1/instruments?query=000001&type=fund").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 1);
@@ -364,13 +320,11 @@ async fn test_search_type_filter_disambiguates_same_symbol() {
     assert_eq!(items[0]["type"], "fund");
     assert_eq!(items[0]["name"], "华夏成长混合");
 
-    // type=stock 消歧
     let (status, body) = get_json(&app, "/api/v1/instruments?query=000001&type=stock").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 1);
     assert_eq!(items_of_body(&body)[0]["name"], "平安银行");
 
-    // market + type 可组合
     let (status, body) = get_json(
         &app,
         "/api/v1/instruments?query=000001&type=stock&market=hk",
@@ -380,14 +334,9 @@ async fn test_search_type_filter_disambiguates_same_symbol() {
     assert_eq!(body["total"], 0, "股票 000001 在深市，hk 过滤后无命中");
 }
 
-// ---------------------------------------------------------------------------
-// 响应形状与排序
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_search_returns_full_instrument_shape_sorted_by_symbol() {
     let (app, conn) = setup_app();
-    // 插入顺序与 symbol 序相反，验证按 symbol 排序
     seed_instrument(&conn, "ORD003", InstrumentType::Bond, Some("丙债"), "sh");
     seed_instrument(&conn, "ORD001", InstrumentType::Stock, Some("甲股"), "sz");
     seed_instrument(&conn, "ORD002", InstrumentType::Etf, None, "sz");
@@ -405,7 +354,6 @@ async fn test_search_returns_full_instrument_shape_sorted_by_symbol() {
         "应按 symbol 排序"
     );
 
-    // 完整 Instrument 形状（含派生字段 price_cents / invested）
     let first = &items[0];
     for field in [
         "id",
@@ -427,10 +375,6 @@ async fn test_search_returns_full_instrument_shape_sorted_by_symbol() {
     assert_eq!(first["price_cents"], serde_json::Value::Null);
     assert_eq!(first["invested"], false);
 }
-
-// ---------------------------------------------------------------------------
-// 开放 API 契约自描述
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_openapi_doc_covers_instruments_search_endpoint() {

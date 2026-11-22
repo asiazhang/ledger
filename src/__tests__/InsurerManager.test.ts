@@ -36,13 +36,11 @@ function insurerCalls(cmd: string) {
 
 beforeEach(async () => {
   insurerDb = mockInsurers;
-  // 管理页只消费保司表（可变库函数型覆写），其余走参考兜底规范夹具
   wireInvokeSeam({ overrides: { list_insurers: () => insurerDb } });
   const store = useReferenceStore();
   await store.refresh();
 });
 
-/** 弹窗内容传送至 document.body：直接在 body 上查询。 */
 function findBodyInputByPlaceholder(placeholder: string): DOMWrapper<HTMLInputElement> {
   const el = document.body.querySelector(`input[placeholder="${placeholder}"]`);
   expect(el, `input[placeholder=${placeholder}] 应存在`).not.toBeNull();
@@ -103,9 +101,7 @@ describe("InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）", () => 
     expect(insurerCalls("create_insurer")).toHaveLength(1);
     expect(insurerCalls("create_insurer")[0][1]).toEqual({ input: { name: "泰康人寿" } });
     expect(messageApi.success).toHaveBeenCalled();
-    // 表单清空
     expect(nameInput.element.value).toBe("");
-    // 重拉后列表出现新保司（store 由失效信号驱动，测试中手动 refresh 模拟）
     await useReferenceStore().refresh();
     expect(wrapper.text()).toContain("泰康人寿");
   });
@@ -129,7 +125,6 @@ describe("InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）", () => 
     expect(messageApi.error).toHaveBeenCalledWith(
       "添加失败: Error: 参数错误: 保司已存在: 泰康人寿",
     );
-    // 表单不清空，用户可直接修正
     expect(nameInput.element.value).toBe("泰康人寿");
   });
 
@@ -139,7 +134,6 @@ describe("InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）", () => 
     await findButton(firstRow, "编辑", { exact: true })!.trigger("click");
     await flushPromises();
 
-    // 弹窗回填当前名
     const nameInput = findBodyInputByPlaceholder("保险公司名称");
     expect(nameInput.element.value).toBe("平安人寿");
 
@@ -164,10 +158,8 @@ describe("InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）", () => 
       id: "ins-1",
       input: { name: "平安人寿股份" },
     });
-    // 改名即时生效（引用指向 id）：重拉后列表显示新名
     await useReferenceStore().refresh();
     expect(wrapper.text()).toContain("平安人寿股份");
-    // 保存成功关窗
     expect(wrapper.findComponent(InsurerEditModal).emitted("update:show")?.at(-1)).toEqual([false]);
   });
 
@@ -176,7 +168,6 @@ describe("InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）", () => 
     await findButton(wrapper.findAll("tbody tr")[0]!, "编辑", { exact: true })!.trigger("click");
     await flushPromises();
 
-    // 其余命令保持接缝未命中报错基座（旧桩末尾同形 reject）
     wireInvokeSeam({
       overrides: {
         update_insurer: () => Promise.reject(new Error("参数错误: 保司已存在: 人保财险")),
@@ -191,7 +182,6 @@ describe("InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）", () => 
     expect(messageApi.error).toHaveBeenCalledWith(
       "更新失败: Error: 参数错误: 保司已存在: 人保财险",
     );
-    // 弹窗不关、内容不丢
     expect(wrapper.findComponent(InsurerEditModal).emitted("update:show")).toBeUndefined();
     expect(nameInput.element.value).toBe("人保财险");
   });
@@ -201,14 +191,12 @@ describe("InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）", () => 
     const row = wrapper.findAll("tbody tr")[0]!;
     await findButton(row, "删除", { exact: true })!.trigger("click");
     await flushPromises();
-    // popconfirm 内容 teleport 到 body，直接对其组件 emit 正向点击（PoliciesView 先例）
     wrapper.findComponent(NPopconfirm).vm.$emit("positiveClick");
     await flushPromises();
 
     expect(insurerCalls("delete_insurer")).toHaveLength(1);
     expect(insurerCalls("delete_insurer")[0][1]).toEqual({ id: "ins-1" });
 
-    // 重拉后默认列表不含已删保司
     insurerDb = insurerDb.map((i) => (i.id === "ins-1" ? { ...i, is_deleted: true } : i));
     await useReferenceStore().refresh();
     expect(rowTexts(wrapper)).toHaveLength(1);
@@ -217,8 +205,6 @@ describe("InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）", () => 
 });
 
 describe("InsurerManager.vue 拼音模糊搜索（issue #714，统一模糊搜索语义 ADR-0027）", () => {
-  /** 五家保司：检索词构造覆盖原文子串（平安 ⊂ 平安人寿/平安财险）
-   * 与拼音首字母子序列（rs ⊂ 人寿 initials、zabx = 众安保险 initials）双入口。 */
   const searchInsurers: Insurer[] = [
     "平安人寿",
     "平安财险",
@@ -258,13 +244,11 @@ describe("InsurerManager.vue 拼音模糊搜索（issue #714，统一模糊搜�
     const wrapper = mount(InsurerManager);
     await searchInput(wrapper).setValue("rs");
     const rows = rowTexts(wrapper);
-    // 人寿（renshou）是三家共有字样：子序列命中全部三家，顺序保持原序
     expect(rows).toHaveLength(3);
     expect(rows[0]).toContain("平安人寿");
     expect(rows[1]).toContain("中国人寿");
     expect(rows[2]).toContain("泰康人寿");
 
-    // 财产险公司不误命中（tk ⊂ 泰康 initials tkrs，且不命中他行）
     await searchInput(wrapper).setValue("tk");
     expect(rowTexts(wrapper)).toHaveLength(1);
     expect(rowTexts(wrapper)[0]).toContain("泰康人寿");
@@ -282,7 +266,6 @@ describe("InsurerManager.vue 拼音模糊搜索（issue #714，统一模糊搜�
     expect(rows[0]).toContain("平安人寿");
     expect(rows[1]).toContain("平安财险");
 
-    // 拼音首字母子序列路径（pa ⊂ pingan）同序
     await searchInput(wrapper).setValue("pa");
     rows = rowTexts(wrapper);
     expect(rows).toHaveLength(2);
@@ -317,7 +300,6 @@ describe("InsurerManager.vue 显示已删切换（issue #714）", () => {
     await store.refresh();
   });
 
-  /** 「显示已删」开关（checkbox 语义定位）。 */
   function showDeletedToggle(wrapper: ReturnType<typeof mount>) {
     return wrapper.findAll(".n-checkbox").find((c) => c.text() === "显示已删")!;
   }
@@ -340,7 +322,6 @@ describe("InsurerManager.vue 显示已删切换（issue #714）", () => {
     await showDeletedToggle(wrapper).trigger("click");
     expect(wrapper.findAll("button").filter((b) => b.text() === "编辑")).toHaveLength(2);
     expect(wrapper.findAll("button").filter((b) => b.text() === "删除")).toHaveLength(2);
-    // 行级精确断言（按按钮而非裸文本，避免与「已删除」标记的子串相撞）
     const deletedRowEl = wrapper.findAll("tbody tr").find((r) => r.text().includes("已裁撤保司"))!;
     expect(deletedRowEl.findAll("button").filter((b) => b.text() === "编辑")).toHaveLength(0);
     expect(deletedRowEl.findAll("button").filter((b) => b.text() === "删除")).toHaveLength(0);

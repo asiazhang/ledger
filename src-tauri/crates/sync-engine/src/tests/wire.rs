@@ -1,6 +1,3 @@
-//! op 信封 wire 形态：序列化往返稳定（通道上的搬运形态，#859 Transport 接线
-//! 的前提）；实体判别键与 serde tag 同源（门 a 双源门，ADR-0101 决策 4a）。
-
 use std::collections::BTreeSet;
 
 use super::super::{DomainCommand, SyncOp};
@@ -21,10 +18,6 @@ fn sync_op_serialization_round_trip() {
     assert_eq!(back, op, "序列化往返无损");
 }
 
-/// 门 (a) 样本表（ADR-0101 决策 4a）：每个可重放变体一条最小样本，键 = serde
-/// entity tag。`other => panic!` 是「新增变体漏补样本」的运行期红：tag 全集由
-/// [`serde_entity_tags`]（serde derive 依 enum 生成，与样本表相互独立的第二来源）
-/// 给出，漏挂样本的新变体一到此即 panic 并列出变体名。
 fn sample(entity: &str) -> DomainCommand {
     match entity {
         "transaction" => {
@@ -91,10 +84,6 @@ fn sample(entity: &str) -> DomainCommand {
     }
 }
 
-/// serde derive 自报的实体 tag 全集（第二来源）：以未知 tag 反序列化
-/// `DomainCommand`，从 serde 的错误信息取回「expected one of …」清单——该清单由
-/// `#[derive(Deserialize)]` 依 enum 变体生成，与样本表相互独立。格式漂移即在此
-/// fail loud（非静默通过）。
 fn serde_entity_tags() -> Vec<String> {
     let error = serde_json::from_str::<DomainCommand>(r#"{"entity":"__probe__","payload":{}}"#)
         .expect_err("探针 tag 不应可反序列化");
@@ -111,8 +100,6 @@ fn serde_entity_tags() -> Vec<String> {
         .collect()
 }
 
-/// 门 (a)：每个变体的 serde entity tag == 注册表组装的裁决域标签（`subject().0`），
-/// 且样本表覆盖 serde 自报的全部变体——新增变体漏补样本即运行期红并列出变体名。
 #[test]
 fn wire_entity_tag_matches_registry_binding_for_every_variant() {
     let tags = serde_entity_tags();
@@ -122,7 +109,6 @@ fn wire_entity_tag_matches_registry_binding_for_every_variant() {
     );
     let mut seen = BTreeSet::new();
     for tag in &tags {
-        // 样本表缺失该变体 → 兜底 panic 臂列出变体名（门 a 运行期红）。
         let command = sample(tag);
         let json = serde_json::to_value(&command).unwrap();
         let wire_tag = json

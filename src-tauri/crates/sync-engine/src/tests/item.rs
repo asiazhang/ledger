@@ -1,6 +1,3 @@
-//! 物品域的全域 op 产出与重放收敛（issue #860）：溯源创建、修改、处置、软删；
-//! 源端折算随行（重放端无汇率也不重折算，ADR-0091 决策 3）。
-
 use super::super::{OpOutcome, read_ops};
 use super::common::{seed_device, wire_in, wire_out};
 use ledger_item::{
@@ -64,7 +61,6 @@ fn item_lifecycle_ops_replay_and_converge() {
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
 
-    // 购买交易（A 端经行为层创建，产交易 op）→ 溯源创建 → 修改 → 处置 → 软删。
     let tx_id = protocol::create(&conn_a, expense_input("acc-1"))
         .unwrap()
         .id;
@@ -88,7 +84,6 @@ fn item_lifecycle_ops_replay_and_converge() {
     .unwrap();
 
     let ops = read_ops(&conn_a).unwrap();
-    // 交易 op + 物品 create/update/dispose 各一条（软删在后续步骤）。
     assert_eq!(ops.len(), 4, "交易 + create/update/dispose：{ops:?}");
     assert_eq!(ops[1].command.subject().0, "item");
 
@@ -116,7 +111,6 @@ fn item_lifecycle_ops_replay_and_converge() {
     assert_eq!(row(&conn_a), row(&conn_b), "重放后物品状态一致");
     assert_eq!(read_ops(&conn_a).unwrap(), read_ops(&conn_b).unwrap());
 
-    // 软删后重投递：全部 Skipped。
     delete_item(&conn_a, &item_id, &mut || {}).unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
     let again = wire_in(&conn_b, &wire_out(&conn_a));
@@ -140,10 +134,6 @@ fn item_create_replay_does_not_reconvert() {
     seed_account(&conn_a, "acc-1", "现金", "cash", "EUR", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "EUR", 0);
 
-    // 汇率只在 A 端存在（EUR→CNY）：源端折算 8.0；B 端无汇率——若重放端重折算
-    // 会因缺汇率失败（挂起），物品缺失即失败信号。物品行折算继承交易行留痕
-    // （#1693），不读当期表；交易写入按交易日取数（#1547），源端另种交易周
-    // （2026-01-10 所属周）历史点。
     test_support::seed_fx_rate_history(&conn_a, "fxh-item", "EUR", "CNY", "2026-01-05", 8.0);
     let mut input = expense_input("acc-1");
     input.currency_code = "EUR".into();

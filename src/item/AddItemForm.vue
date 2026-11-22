@@ -8,15 +8,6 @@ import { useItemsStore } from "@/item/items";
 import { t } from "@ledger/i18n";
 import type { Transaction } from "@ledger/types";
 
-/**
- * 「加入物品」确认弹窗（issue #119 / ADR-0025 创建唯一入口）：
- * 购买日期 / 基础成本 / 币种从交易自动带出并**只读展示**（提交时原样传给后端，
- * 后端仍以交易值覆盖——前端预填只是口径预览，不是第二事实源）；
- * 名称默认取交易备注（可微调）。确认后调用创建命令（溯源必填）。
- *
- * 后端校验失败（重复创建 / 非 expense 等）时错误信息经 message 可见，
- * 弹窗保持打开，用户可取消或改名重试。
- */
 const props = defineProps<{ transaction: Transaction }>();
 
 const emit = defineEmits<{ created: []; cancel: [] }>();
@@ -25,7 +16,6 @@ const itemsStore = useItemsStore();
 const reference = useReferenceStore();
 const message = useMessage();
 
-/** 名称默认取交易备注，可微调；备注为空时留空，提交前由校验提示。 */
 const name = ref(props.transaction.note ?? "");
 const submitting = ref(false);
 

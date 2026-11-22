@@ -1,27 +1,18 @@
-//! 报表测试（issue #57 迁移后）：断言报表核心函数与 Amount 接缝的度量矩阵一致，
-//! 不复制生产 SQL——期望值由 `signed_amount`（kind × measure）对夹具逐行求和得出。
-
 use rusqlite::Connection;
 
-use ledger_infra::db::now_iso;
-// 测试实例纪律（#1092 同款）：本域是纯读路径、不读任何接缝注册静态，域单测直接
-// 驱动本 crate 实例（crate 根再导出面路径与拆出前域根路径同形）。
 use crate::{category_shares_rows, merchant_shares_report, monthly_summary_rows};
+use ledger_infra::db::now_iso;
 use ledger_sync_protocol::device::device_id;
 use ledger_transaction::amount::{Measure, TransactionKind, contributing_kinds, signed_amount};
 
 fn setup() -> Connection {
-    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）：
-    // 工厂住根包，dev-dependency 环引用（ledger-transaction/#1092 先例同款）。
     tauri_app_lib::test_support::open()
 }
 
 fn insert_account(conn: &Connection, id: &str) {
-    // 报表世界脚手架账户：工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）。
     tauri_app_lib::test_support::seed_account(conn, id, "测试账户", "cash", "CNY", 0);
 }
 
-/// 夹具一行 = 一笔交易（kind 用 Amount 接缝的 TransactionKind 枚举表述）。
 struct TxRow {
     id: &'static str,
     kind: TransactionKind,
@@ -42,7 +33,6 @@ fn insert_tx(conn: &Connection, r: &TxRow) {
     .unwrap();
 }
 
-/// 按月对夹具逐行求指定度量的和——期望值的唯一来源是度量矩阵，不是生产 SQL。
 fn measure_sum(rows: &[TxRow], month: &str, measure: Measure) -> i64 {
     rows.iter()
         .filter(|r| r.date.starts_with(month))
@@ -50,7 +40,6 @@ fn measure_sum(rows: &[TxRow], month: &str, measure: Measure) -> i64 {
         .sum()
 }
 
-/// 覆盖全部 8 种 kind 的夹具：验证月度三列恒等于度量矩阵口径。
 fn all_kinds_fixture(category_id: Option<&str>) -> Vec<TxRow> {
     let category_id = category_id.map(|s| s.to_string());
     vec![
@@ -113,8 +102,6 @@ fn all_kinds_fixture(category_id: Option<&str>) -> Vec<TxRow> {
     ]
 }
 
-// ---- monthly_summary_rows：毛值三列，单一口径 ----
-
 #[test]
 fn monthly_summary_empty_when_no_transactions() {
     let conn = setup();
@@ -123,10 +110,6 @@ fn monthly_summary_empty_when_no_transactions() {
     assert!(rows.is_empty());
 }
 
-/// 月度三列对全部 kind 一致：
-/// - income 列 = `income_net`（收入 + 分红）
-/// - expense 列 = 毛支出 = `expense_net + refund_gross`（净值恒等式）
-/// - refund 列 = `refund_gross`
 #[test]
 fn monthly_summary_columns_match_measures_for_all_kinds() {
     let conn = setup();
@@ -224,10 +207,6 @@ fn monthly_summary_excludes_deleted() {
     );
 }
 
-// ---- 期间过滤（issue #411）：from/to 含边界，任一端存在即期间口径 ----
-
-/// 年期间：按月分布（分组按月不变），年界外不计入。
-/// 遗留 `year` 在期间口径下不参与，传 0 占位（下同）。
 #[test]
 fn monthly_summary_period_filters_by_range() {
     let conn = setup();
@@ -266,7 +245,6 @@ fn monthly_summary_period_filters_by_range() {
     assert_eq!(rows[1].expense_cents, 500);
 }
 
-/// 季期间：季度三个月界内成行、季外不计入（季 = 3 个月行）。
 #[test]
 fn monthly_summary_period_quarter_bounds() {
     let conn = setup();
@@ -305,7 +283,6 @@ fn monthly_summary_period_quarter_bounds() {
     assert_eq!(rows[1].expense_cents, 400);
 }
 
-/// 月期间：单行如实汇总（不切日粒度），起止边界日双双计入。
 #[test]
 fn monthly_summary_period_month_single_group_with_inclusive_bounds() {
     let conn = setup();
@@ -359,7 +336,6 @@ fn monthly_summary_period_month_single_group_with_inclusive_bounds() {
     );
 }
 
-/// 期间口径优先：from/to 存在时遗留 year 不参与（他年流水不因 year 混入）。
 #[test]
 fn monthly_summary_period_overrides_legacy_year() {
     let conn = setup();
@@ -389,8 +365,6 @@ fn monthly_summary_period_overrides_legacy_year() {
     assert_eq!(rows[0].expense_cents, 500);
 }
 
-// ---- category_shares_rows：净值口径 ----
-
 fn first_category_id(conn: &Connection, kind: &str) -> String {
     conn.query_row(
         "SELECT id FROM categories WHERE kind=?1 AND parent_id IS NULL ORDER BY created_at LIMIT 1",
@@ -400,7 +374,6 @@ fn first_category_id(conn: &Connection, kind: &str) -> String {
     .unwrap()
 }
 
-/// 支出分类净值 = `expense_net`（毛支出 − 退款）；投资类（buy/sell）不进经营收支。
 #[test]
 fn category_shares_expense_net_subtracts_refund() {
     let conn = setup();
@@ -420,7 +393,6 @@ fn category_shares_expense_net_subtracts_refund() {
     assert_eq!(rows[0].amount_cents, 900, "1200 − 300 退款");
 }
 
-/// 收入分类净值 = `income_net`（收入 + 分红）；分红计入收入报表。
 #[test]
 fn category_shares_income_net_includes_dividend() {
     let conn = setup();
@@ -470,7 +442,6 @@ fn category_shares_filters_by_month() {
     assert_eq!(rows_jan[0].amount_cents, 1000);
 }
 
-/// 年份过滤（issue #376）：传年份只统计所选年份的支出净值，他年不计入。
 #[test]
 fn category_shares_filters_by_year() {
     let conn = setup();
@@ -500,8 +471,6 @@ fn category_shares_filters_by_year() {
     assert_eq!(rows[0].amount_cents, 1000);
 }
 
-/// 退款冲减按所选年口径（issue #376）：退款以自身日期参与年份过滤，
-/// 所选年内的退款冲减该年净额，他年退款不冲减所选年。
 #[test]
 fn category_shares_refund_offsets_within_selected_year_only() {
     let conn = setup();
@@ -554,7 +523,6 @@ fn category_shares_refund_offsets_within_selected_year_only() {
     );
 }
 
-/// 缺省年份（None）保持全时段口径（issue #376：已发布 API 只增不改，既有调用方不回归）。
 #[test]
 fn category_shares_default_spans_all_years() {
     let conn = setup();
@@ -584,7 +552,6 @@ fn category_shares_default_spans_all_years() {
     assert_eq!(rows[0].amount_cents, 1800, "缺省不传年份 = 全时段合计");
 }
 
-/// income 分支（`income_net` 口径）的年份过滤与 expense 同款 SQL 路径（issue #376）。
 #[test]
 fn category_shares_income_filters_by_year() {
     let conn = setup();
@@ -614,7 +581,6 @@ fn category_shares_income_filters_by_year() {
     assert_eq!(rows[0].amount_cents, 1000);
 }
 
-/// month 与 year 过滤条件可叠加：占位符按条件追加顺序编号，参数一一对齐。
 #[test]
 fn category_shares_month_and_year_combine() {
     let conn = setup();
@@ -652,8 +618,6 @@ fn category_shares_month_and_year_combine() {
     assert_eq!(rows[0].amount_cents, 1000, "同年同月才计入");
 }
 
-/// 期间过滤（issue #411）：界内净值成行，界外不计入；退款以自身日期参与期间过滤
-///（界内退款冲减该期间净额，界外退款不冲减）。
 #[test]
 fn category_shares_filters_by_period_range() {
     let conn = setup();
@@ -698,9 +662,6 @@ fn category_shares_filters_by_period_range() {
     assert_eq!(rows[0].amount_cents, 700, "1000 − 300，界内退款冲减");
 }
 
-/// 单边期间（仅 from 或仅 to）也走期间分支：`from.is_some() || to.is_some()`
-/// 判定的击杀面（变异测试报告 2026-10 首轮：`&&` 变异在既有双边用例下不可区分，
-/// 单边被误判走遗留 month/year 分支即期间过滤丢失）。
 #[test]
 fn category_shares_period_single_sided_bounds() {
     let conn = setup();
@@ -726,20 +687,17 @@ fn category_shares_period_single_sided_bounds() {
         insert_tx(&conn, r);
     }
 
-    // 仅 from：晚于边界的计入（2025-11 排除）。
     let from_only =
         category_shares_rows(&conn, "expense", None, None, Some("2026-01-01"), None).unwrap();
     assert_eq!(from_only.len(), 1, "仅 from 也按期间过滤（早于边界不计）");
     assert_eq!(from_only[0].amount_cents, 900);
 
-    // 仅 to：早于边界的计入（2026-03 排除）。
     let to_only =
         category_shares_rows(&conn, "expense", None, None, None, Some("2025-12-31")).unwrap();
     assert_eq!(to_only.len(), 1, "仅 to 也按期间过滤（晚于边界不计）");
     assert_eq!(to_only[0].amount_cents, 400);
 }
 
-/// 期间口径优先：from/to 存在时遗留 month/year 不参与。
 #[test]
 fn category_shares_period_overrides_legacy_month_year() {
     let conn = setup();
@@ -777,7 +735,6 @@ fn category_shares_period_overrides_legacy_month_year() {
     assert_eq!(rows[0].amount_cents, 2000, "只计期间内（二月）支出");
 }
 
-/// income 分支（`income_net` 口径）与 expense 同款期间 SQL 路径（issue #411）。
 #[test]
 fn category_shares_income_filters_by_period_range() {
     let conn = setup();
@@ -833,8 +790,6 @@ fn category_shares_unclassified_shows_default_name() {
     assert_eq!(rows[0].category_name, "未分类");
 }
 
-// ---- merchant_shares_rows：商户消费排行（净额口径，issue #192）----
-
 fn insert_merchant(conn: &Connection, id: &str) {
     let now = now_iso();
     conn.execute(
@@ -845,7 +800,6 @@ fn insert_merchant(conn: &Connection, id: &str) {
     .unwrap();
 }
 
-/// 商户夹具一行 = 一笔带商户的交易（`amount` 即本位币分，与 `amount_native_cents` 同值）。
 struct MerchantTxRow {
     id: &'static str,
     kind: TransactionKind,
@@ -866,7 +820,6 @@ fn insert_merchant_tx(conn: &Connection, r: &MerchantTxRow) {
     .unwrap();
 }
 
-/// 按月对商户夹具逐行求指定度量的和——期望值的唯一来源是度量矩阵，不是生产 SQL。
 fn merchant_measure_sum(rows: &[MerchantTxRow], month: &str, measure: Measure) -> i64 {
     rows.iter()
         .filter(|r| r.date.starts_with(month))
@@ -874,9 +827,6 @@ fn merchant_measure_sum(rows: &[MerchantTxRow], month: &str, measure: Measure) -
         .sum()
 }
 
-/// 交易笔数期望（issue #617）：参与指定度量的行数（系数非 0，与 `merchant_measure_sum`
-/// 同一矩阵）——退款在金额中冲减、在笔数中计数；`contributing_kinds` 即矩阵系数非 0 的
-/// kind 清单，与生产 SQL 的 `WHERE kind IN` 同源，期望值不由手写 kind 清单推导。
 fn merchant_count(rows: &[MerchantTxRow], month: &str, measure: Measure) -> i64 {
     rows.iter()
         .filter(|r| r.date.starts_with(month))
@@ -884,7 +834,6 @@ fn merchant_count(rows: &[MerchantTxRow], month: &str, measure: Measure) -> i64 
         .count() as i64
 }
 
-/// 退款冲减商户净额：`expense_net`（毛支出 − 退款）口径。
 #[test]
 fn merchant_shares_expense_net_subtracts_refund() {
     let conn = setup();
@@ -927,7 +876,6 @@ fn merchant_shares_expense_net_subtracts_refund() {
     assert_eq!(rows[0].transaction_count, 2, "支出 1 笔 + 退款 1 笔 = 2 笔");
 }
 
-/// 覆盖全部 8 种 kind：只有 expense/refund 进商户排行；income（即使带商户）不计消费。
 #[test]
 fn merchant_shares_only_expense_kinds_contribute() {
     let conn = setup();
@@ -1012,12 +960,10 @@ fn merchant_shares_only_expense_kinds_contribute() {
     assert_eq!(rows[0].transaction_count, 2, "仅支出 1 笔 + 退款 1 笔");
 }
 
-/// 无商户关联的交易不进排行：净支出一律不虚增合计。
 #[test]
 fn merchant_shares_excludes_unmerchant_transactions() {
     let conn = setup();
     insert_account(&conn, "acc");
-    // 无商户支出 + 带商户收入：均不产生排行行
     insert_tx(
         &conn,
         &TxRow {
@@ -1045,15 +991,11 @@ fn merchant_shares_excludes_unmerchant_transactions() {
     assert!(rows.is_empty(), "无商户支出与带商户收入都不进消费排行");
 }
 
-/// 无商户交易的笔数排除（issue #617）：与「无商户交易不进排行」同源——一笔无商户
-/// 支出即便发生也不产生排行行、更不被计入任何商户的笔数；带商户收入（非参与 kind）
-/// 同样不进笔数。仅参与 kind（支出 + 退款）的商户行才反映笔数，与金额同口径。
 #[test]
 fn merchant_shares_no_merchant_excluded_from_count() {
     let conn = setup();
     insert_account(&conn, "acc");
     insert_merchant(&conn, "m-tt");
-    // 无商户支出 + 带商户收入：均不进排行、不计入笔数
     insert_tx(
         &conn,
         &TxRow {
@@ -1074,7 +1016,6 @@ fn merchant_shares_no_merchant_excluded_from_count() {
             date: "2026-03-06",
         },
     );
-    // 带商户支出：唯一成行的参与 kind 记录
     insert_merchant_tx(
         &conn,
         &MerchantTxRow {
@@ -1097,7 +1038,6 @@ fn merchant_shares_no_merchant_excluded_from_count() {
     );
 }
 
-/// 多商户按净额降序排列，同额商户按名称次序稳定输出。
 #[test]
 fn merchant_shares_orders_desc() {
     let conn = setup();
@@ -1138,7 +1078,6 @@ fn merchant_shares_orders_desc() {
     assert_eq!(names, vec!["m-b", "m-c", "m-a"], "应按净额降序");
 }
 
-/// 按年份过滤：只统计所选年份的商户净支出。
 #[test]
 fn merchant_shares_filters_by_year() {
     let conn = setup();
@@ -1171,7 +1110,6 @@ fn merchant_shares_filters_by_year() {
     assert_eq!(rows[0].transaction_count, 1, "仅 2026 年这笔支出计入笔数");
 }
 
-/// 期间过滤（issue #411）：界内净支出进排行，界外不计入。
 #[test]
 fn merchant_shares_filters_by_period() {
     let conn = setup();
@@ -1216,7 +1154,6 @@ fn merchant_shares_filters_by_period() {
     assert_eq!(rows[1].transaction_count, 1, "期间内该商户 1 笔支出");
 }
 
-/// 软删商户的历史引用照常统计显示（ADR-0028：历史引用保留，改名/软删不回刷历史行）。
 #[test]
 fn merchant_shares_includes_soft_deleted_merchant_history() {
     let conn = setup();
@@ -1242,9 +1179,6 @@ fn merchant_shares_includes_soft_deleted_merchant_history() {
     assert_eq!(rows[0].transaction_count, 1, "软删商户的历史引用照常计数");
 }
 
-/// 交易笔数与金额同口径（issue #617）：退款在金额中冲减（expense_net 变小），
-/// 但在笔数中照常计数——一商户多笔支出 + 多笔退款，笔数 = 全部参与行，
-/// 不被退款冲减（避免「负数笔数」或「笔数被净额吞掉」的口径漂移）。
 #[test]
 fn merchant_shares_transaction_count_refunds_counted() {
     let conn = setup();
@@ -1299,13 +1233,6 @@ fn merchant_shares_transaction_count_refunds_counted() {
     );
 }
 
-// ---- merchant_shares_report：可选 topN 截断 + 全量合计（issue #588）----
-//
-// 截断语义：top_n 在 ORDER BY（net DESC, name）之后应用、收口后端；
-// 全量合计（tooltip 占比分母）与截断无关，永远覆盖本期全部商户。
-
-/// 排行截断夹具：五商户各一笔支出，净额 100/300/200/500/400
-///（m-a..m-e 插入序 ≠ 名次序，期望序 = m-d(500) m-e(400) m-b(300) m-c(200) m-a(100)）。
 fn insert_ranking_fixture(conn: &Connection) {
     insert_account(conn, "acc");
     let rows = [
@@ -1393,7 +1320,6 @@ fn merchant_shares_top_n_zero_yields_empty_rows_with_total() {
     let report = merchant_shares_report(&conn, 2026, None, None, Some(0)).unwrap();
     assert!(report.rows.is_empty(), "top_n=0 = 空 rows（防御边界）");
     assert_eq!(report.total_cents, 1500, "合计仍全量");
-    // 负值防御同归空集（档位闭集二：5/10，正常调用方不会发出）
     let report = merchant_shares_report(&conn, 2026, None, None, Some(-1)).unwrap();
     assert!(report.rows.is_empty(), "负 top_n 防御性归空集");
     assert_eq!(report.total_cents, 1500, "合计仍全量");
@@ -1403,7 +1329,6 @@ fn merchant_shares_top_n_zero_yields_empty_rows_with_total() {
 fn merchant_shares_top_n_keeps_name_tiebreak_at_boundary() {
     let conn = setup();
     insert_account(&conn, "acc");
-    // 同额 300 两商户 + 100 一商户：同额按名称决胜，截断边界处不翻转
     insert_merchant(&conn, "m-b");
     insert_merchant(&conn, "m-a");
     insert_merchant(&conn, "m-c");
@@ -1434,8 +1359,6 @@ fn merchant_shares_top_n_keeps_name_tiebreak_at_boundary() {
         "笔数随行透传（前两名各 1 笔）"
     );
 }
-
-// ---- query_report_date_range：日期极值范围（issue #266 / #389）----
 
 use crate::query_report_date_range;
 

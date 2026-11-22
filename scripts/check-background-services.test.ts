@@ -13,13 +13,6 @@ import {
 } from "../scripts/check-background-services.ts";
 import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 
-// 被测对象是仓库工具脚本 scripts/check-background-services.ts（后台服务成对
-// 拉起守门，issue #961）。脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以
-// spawnSync('bun') 与门槛调用同款拉起，测的就是门槛路径。按测试决策只测外部
-// 可观察结果——进程退出码与输出，不测内部函数；通过位置参数把扫描目标指向
-// 临时夹具目录（check-structure.test.ts 同款先例）。夹具根即 src-tauri 根
-// 等价目录（#1472 起扫描面 = src-tauri 全树、排除 target/，根包文件落 `src/`）。
-// 夹具白名单清单自脚本导出的 GUARDED_NAMES 派生（单一事实源，无双源漂移）。
 const script = gateScript("check-background-services.ts");
 const run = (args: string[]) => runGateScript(script, args);
 
@@ -28,8 +21,6 @@ afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-/** 编排点夹具：函数体内全部域入口同时出现（合法唯一形态；名单自 PAIRED_NAMES 派生则将双源，
- *  此处按当前名单手写，新增后台服务时随编排点同步） */
 const orchestratorPaired = `pub fn ${ORCHESTRATOR_FN}(app: &tauri::AppHandle) {
     backup::start_scheduler(app);
     sync_engine::start_triggers(app);
@@ -40,8 +31,6 @@ const orchestratorPaired = `pub fn ${ORCHESTRATOR_FN}(app: &tauri::AppHandle) {
 }
 `;
 
-/** 启动接线夹具：壳层启动处注册写路径副作用接缝（issue #1088 / #1090 / #1091
- *  启动接线单点：提交点后置动作 + 期次落账置脏对装 + 追补触发对装） */
 const bootWiring = `pub fn run() {
     backup::install_after_commit_hook();
     scheduled_transactions::auto_run::register_after_occurrence_hook(backup::occurrence_dirty_hook);
@@ -49,13 +38,6 @@ const bootWiring = `pub fn run() {
 }
 `;
 
-/**
- * 建临时夹具：按脚本导出的 GUARDED_NAMES 生成全部白名单条目文件（每文件
- * 写入映射到它的全部受守标识符）+ 编排点 `lib.rs`（成对形态），再按 overrides
- * 追加/覆盖文件。返回脚本参数（夹具 src-tauri 根）。
- * #1472 起扫描面 = src-tauri 全树：白名单条目（crate 路径带 `crates/` 前缀）与
- * 根包文件（带 `src/` 前缀的编排点）同住夹具根，路径基准与脚本同址。
- */
 function makeFixture(overrides: Record<string, string> = {}): string[] {
   const root = mkdtempSync(join(tmpdir(), "check-background-services-"));
   tempDirs.push(root);
@@ -68,8 +50,6 @@ function makeFixture(overrides: Record<string, string> = {}): string[] {
   for (const [relPath, names] of namesByPath) {
     const abs = join(root, relPath);
     mkdirSync(join(abs, ".."), { recursive: true });
-    // 车道文件（issue #1413 车道执行器守门 + #1622 收敛后的接线面）：写入调度
-    // 接线 start_daily_lane（与 LANE_WIRE_TOKEN 同源，夹具即规格）、零自建线程。
     const laneWire = (LANE_FILES as readonly string[]).includes(relPath)
       ? `lane::start_daily_lane(app, &SPAWNED, timings, |h| round(h));\n`
       : "";
@@ -77,8 +57,6 @@ function makeFixture(overrides: Record<string, string> = {}): string[] {
   }
   const files: Record<string, string> = {
     [ORCHESTRATOR_FILE]: bootWiring + orchestratorPaired,
-    // 调度循环单点夹具（issue #1622，不在 GUARDED_NAMES 白名单内，显式落夹具）：
-    // lane.rs 持有合法异步形态——spawn 拉起 + tokio::time::sleep 异步定时。
     [LANE_SCHEDULER_REL]:
       "pub fn start_daily_lane() {\n    tauri::async_runtime::spawn(async move {\n        tokio::time::sleep(std::time::Duration::from_millis(1)).await;\n    });\n}\n",
     ...overrides,
@@ -96,7 +74,6 @@ describe("check-background-services（后台服务成对拉起守门，issue #96
     const r = run([]);
     expect(r.status).toBe(0);
     expect(r.output).toContain(ORCHESTRATOR_FN);
-    // 摘要中的受守入口数自脚本导出的 GUARDED_NAMES 派生（单一事实源）
     expect(r.output).toContain(`受守入口 ${GUARDED_NAMES.length} 个`);
   });
 
@@ -175,7 +152,6 @@ describe("check-background-services（后台服务成对拉起守门，issue #96
   it("白名单条目文件缺失 → 清单漂移报红（fail loud）", () => {
     const root = mkdtempSync(join(tmpdir(), "check-background-services-"));
     tempDirs.push(root);
-    // 夹具只建编排点，不建白名单条目文件
     const orchestrator = join(root, ORCHESTRATOR_FILE);
     mkdirSync(join(orchestrator, ".."), { recursive: true });
     writeFileSync(orchestrator, orchestratorPaired);
@@ -214,7 +190,6 @@ describe("check-background-services（后台服务成对拉起守门，issue #96
 
   it("车道文件删掉共享调度循环接线 → 报红（删除即变红，#1622 收敛）", () => {
     const lane = LANE_FILES[1];
-    // 只留 use 导入、删掉调用：接线断言对准调用形状，导入不足以假绿。
     const srcArg = makeFixture({
       [lane]:
         "use crate::lane::start_daily_lane;\npub fn start_daily_price_refresh(app: &tauri::AppHandle) {}\n",
@@ -235,8 +210,6 @@ describe("check-background-services（后台服务成对拉起守门，issue #96
     expect(r.output).toContain("tauri::async_runtime::spawn");
   });
 
-  // 扫描面扩到 src-tauri 全树（#1472）：crates/ 内绕过唯一编排点直接拉起受守
-  // 调度器（#863 历史缺陷形态）必须当场报红；把扫描面收回根包 src 即本用例变红。
   it("crates 内新增调用点 → 报红并定位 crate 文件行号（扩面收口，#1472）", () => {
     const args = makeFixture({
       "crates/backup/src/extra_entry.rs":
@@ -282,13 +255,9 @@ describe("check-background-services（后台服务成对拉起守门，issue #96
     tempDirs.push(root);
     const r = run([root]);
     expect(r.status).toBe(1);
-    // 哨兵自身文案：仅断言「空集」会被车道门既有文案（扫描面不可达）满足，
-    // 删掉全树零源文件哨兵也不变红——断言须对准本哨兵（ADR-0087 断言强度）。
     expect(r.output).toContain("扫描面提不出任何非测试 Rust 文件");
   });
   it("编排点缺应用更新启动延迟检查 → 报红（删除即变红，ADR-0124 决策 4 / issue #1429）", () => {
-    // 夹具编排点回到五服务形态（缺 start_auto_update_check；启动接线段保留）：
-    // 守门纳入后成组性破坏即红
     const fiveServices = `pub fn ${ORCHESTRATOR_FN}(app: &tauri::AppHandle) {\n    backup::start_scheduler(app);\n    sync_engine::start_triggers(app);\n    market_sync::start_history_backfill(app);\n    market_sync::start_daily_price_refresh(app);\n    market_sync::start_daily_fx_sync(app);\n}\n`;
     const args = makeFixture({ [ORCHESTRATOR_FILE]: bootWiring + fiveServices });
     const r = run(args);

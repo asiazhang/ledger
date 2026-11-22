@@ -5,16 +5,7 @@ import { NButton, NDatePicker } from "naive-ui";
 import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
 import type { Transaction } from "@ledger/types";
 
-/**
- * 交易页时间维度行行为测试（issue #382）。
- *
- * 只测外部行为：点芯片后的过滤状态（起止日期快照）、列表刷新与翻页归零、
- * 芯片点亮可见态、清除筛选与 URL 复位回「全部」。芯片换算逻辑（预设 ⇄ 区间、
- * 高亮匹配）的边界单测见 time-period.test.ts。今天是本文件的前提——
- * 以 fake timers 固定为 2026-01-15（本地），芯片换算结果随之确定。
- */
 describe("TransactionsView 时间维度行（issue #382）", () => {
-  // 富数据集：当月/当月外/去年各一笔，供刷新结果区分断言
   const chipDb: Transaction[] = [
     makeTxn(1, "acc-1", { date: "2026-01-05" }),
     makeTxn(2, "acc-1", { date: "2026-02-10" }),
@@ -23,7 +14,6 @@ describe("TransactionsView 时间维度行（issue #382）", () => {
 
   beforeEach(() => {
     setTxnDb([...chipDb]);
-    // 固定「今天」：芯片快照与高亮随之确定（2026-01-15 → 当月 2026-01、当季 2026Q1）
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 0, 15, 12, 0, 0));
   });
@@ -32,7 +22,6 @@ describe("TransactionsView 时间维度行（issue #382）", () => {
     vi.useRealTimers();
   });
 
-  /** 芯片按钮按文案定位（文案唯一：全部/当月/当季/当年/去年）。 */
   const chip = (wrapper: ReturnType<typeof mount>, label: string) =>
     wrapper.findAllComponents(NButton).find((b) => b.text().trim() === label)!;
 
@@ -99,7 +88,6 @@ describe("TransactionsView 时间维度行（issue #382）", () => {
     expect(wrapper.text()).toContain("共 2 条");
     await clickChip(wrapper, "去年");
     expect(lastListFilter()).toMatchObject({ from: "2025-01-01", to: "2025-12-31" });
-    // 去年区间恰有 1 笔（2025-06-01），列表诚实刷新
     expect(wrapper.text()).toContain("共 1 条");
     expect(lit(wrapper, "去年")).toBe(true);
   });
@@ -144,7 +132,6 @@ describe("TransactionsView 时间维度行（issue #382）", () => {
     const wrapper = await mountView();
     await clickChip(wrapper, "当月");
     expect(lastListFilter()).toMatchObject({ from: "2026-01-01", to: "2026-01-31" });
-    // 导航清除 query → 模块复位日期/类型（#96 决策 3）→「全部」重新点亮
     routeMock.query = {};
     await flushPromises();
     const f = lastListFilter();
@@ -155,7 +142,6 @@ describe("TransactionsView 时间维度行（issue #382）", () => {
   });
 
   it("切换时间维度后翻页归零：从第 2 页点其他芯片回到第 1 页", async () => {
-    // 25 条当月数据 → 第 1 页 20 条 + 第 2 页 5 条
     setTxnDb(Array.from({ length: 25 }, (_, i) => makeTxn(i + 1, "acc-1", { date: "2026-01-05" })));
     const wrapper = await mountView();
     await clickChip(wrapper, "当月");

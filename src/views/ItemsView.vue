@@ -40,9 +40,6 @@ import { t } from "@ledger/i18n";
 
 const reference = useReferenceStore();
 
-// 移动档（issue #849 / ADR-0088 决策 11 票⑨，收纳页布局核对级适配）：低频管理表
-// 窄屏不重排列结构，挂 scroll-x = 固定列宽总和由横向滚动吸收（触屏滑动可达全部
-// 列与行内操作）；桌面档不挂（既有压缩行为一字不变）。
 const windowTier = useWindowTier();
 const isMobileTier = computed(() => windowTier.value === "mobile");
 const itemsStore = useItemsStore();
@@ -50,22 +47,14 @@ const message = useMessage();
 const router = useRouter();
 const route = useRoute();
 
-// 账本本位币基准（LedgerLevelSetting 首个成员，issue #858）：「本位币折算」行的符号与
-// 后缀取账本本位币——设备展示币种（app.defaultCurrency）自 #858 起只是本机表单预选/
-// 观感偏好，与折算语义分离；读取失败保持默认 CNY（issue #1664 范围外修复）。
 const baseCurrencyCode = ref<string>("CNY");
 
-// —— 创建唯一入口提示（issue #207，ADR-0025）：物品只能经交易右键「加入物品」创建，
-// 本页不提供手动新增表单；提示条常驻顶部并一键跳转交易页。——
 function goTransactions() {
   router.push({ name: "transactions" });
 }
 
-// —— 关联购买交易候选（issue #119）：编辑弹窗换关仍需候选列表（交易右键创建入口不经此页）——
-// 后端校验交易存在且为 expense 并以交易值覆盖落库；物品侧仅存溯源指针，无「交易→物品」反向引用。
 const expenseTxs = ref<Transaction[]>([]);
 const editLinkTxId = ref<string | null>(null);
-/** 编辑弹窗打开时物品的既有关联：维持原关联 → 手动编辑照常生效；换关 → 后端重新带出覆盖。 */
 const editOrigLink = ref<string | null>(null);
 
 const linkTxOptions = () =>
@@ -78,7 +67,6 @@ function findLinkedTx(txId: string | null): Transaction | undefined {
   return expenseTxs.value.find((t) => t.id === txId);
 }
 
-/** 编辑弹窗：换关时自动带出日期/成本；与后端约定一致，换关即重新带出覆盖。 */
 function applyLinkedTxToEdit(txId: string | null) {
   const tx = findLinkedTx(txId);
   if (!tx) return;
@@ -86,17 +74,8 @@ function applyLinkedTxToEdit(txId: string | null) {
   editCostYuan.value = String(centsToYuan(tx.amount_cents));
 }
 
-/** 换关中（选中了与原关联不同的交易）：日期/成本将被后端带出覆盖，禁用手改。 */
 const editRelinking = computed(() => editLinkTxId.value !== editOrigLink.value);
 
-// —— 编辑（issue #117）：按 id 修改 名称 / 购买日期 / 总成本 / 备注；币种不可改 ——
-// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072）：意图闭集单成员
-// （携带目标物品行），显示由「意图非空」派生、序号随开启递增驱动表单重建、
-// 关闭清回 null 终态。现状无序号守卫，迁移为缺陷修复（本票唯一声明的行为
-// 变化）：守卫从无到有，「弹窗开着时目标行被替换回填旧行」缺陷消亡，
-// 同目标重开重回填等边缘语义细化同归此类；此外等价。
-
-/** 编辑物品弹窗意图（单成员闭集）：携带目标物品行。 */
 interface ItemEditIntent {
   row: ItemWithDailyCost;
 }
@@ -155,15 +134,11 @@ async function saveEdit() {
   }
 }
 
-// —— 详情（issue #117）：成本分解 = 分子（总成本 − 残值） ÷ 已用天数 = 每天成本 ——
 const detail = ref<ItemWithDailyCost | null>(null);
 
-// —— 详情自选参考日重算（issue #121）：选择参考日 → 后端重算三元组覆盖展示；
-// 清空 → 回缺省目标日（在用今天/已处置处置日）。null = 未重算（展示列表快照）。 ——
 const detailRefDate = ref<string | null>(null);
 const detailCost = ref<ItemDailyCost | null>(null);
 
-/** 详情成本三元组展示值：重算结果优先，未重算/重算失败回落列表快照。 */
 const detailCostView = computed(() => ({
   days: detailCost.value?.used_days ?? detail.value?.used_days ?? 0,
   numeratorCents: detailCost.value?.numerator_cents ?? detail.value?.numerator_cents ?? 0,
@@ -182,7 +157,6 @@ async function recalcDetail(date: string | null) {
 
 function openDetail(row: ItemWithDailyCost) {
   detail.value = row;
-  // 换行重置：参考日与重算结果不跨物品残留
   detailRefDate.value = null;
   detailCost.value = null;
 }
@@ -191,8 +165,6 @@ function detailAmount(cents: number): string {
   return detail.value ? formatAmount(cents, reference.getCurrency(detail.value.currency_code)) : "";
 }
 
-// —— 处置（issue #120）：置 disposed 并记录处置日期（必填）与可选残值；
-// 已处置物品再次处置 = 修正处置信息 ——
 const disposing = ref<ItemWithDailyCost | null>(null);
 const disposeDate = ref("");
 const disposeResidualYuan = ref("");
@@ -238,7 +210,6 @@ async function confirmDispose() {
   }
 }
 
-// —— 软删除（issue #118）：二次确认后 is_deleted=1，列表自动过滤 ——
 async function removeItem(id: string) {
   try {
     await itemsStore.remove(id);
@@ -248,17 +219,8 @@ async function removeItem(id: string) {
   }
 }
 
-// —— 物品列表 ——
-// —— 来源跳转落点（spec #704 / issue #708，词汇表「实体定位参数（focus 参数）」）：
-// 挂载消费一次（读一次语义归 useFocusParam 单点）；物品行高亮属「先拿 id 后等
-// 数据」——回调只暂存 id，列表渲染后滚动定位（读取时刻与生效时刻解耦）。
-// 已处置物品仍在列表（带处置标注），高亮不落空；软删物品已不在列表，来源列
-// 对其不反查（后端同口径），无落空态。高亮保持到实例消亡：刷新/重进 = 新实例
-// 重定位，URL 在场即复现、可分享。独立路由与收纳态（组「更多」物品页签，
-// 同一组件整体装载）共用本消费点。——
 const highlightedItemId = ref<string | null>(null);
 
-/** 表格组件引用：滚动定位在其自身子树内查行锚点。 */
 const tableRef = ref<{ $el?: HTMLElement } | null>(null);
 
 const focusParam = useFocusParam({
@@ -268,7 +230,6 @@ const focusParam = useFocusParam({
   },
 });
 
-/** 行锚点 + 高亮类：滚动定位的 data 属性与高亮样式同源一处。 */
 function rowProps(row: ItemWithDailyCost): Record<string, unknown> {
   return {
     "data-item-id": row.id,
@@ -276,12 +237,8 @@ function rowProps(row: ItemWithDailyCost): Record<string, unknown> {
   };
 }
 
-/** 渲染完成后滚动到高亮行（列表数据到位后调用；无 focus 空转）。 */
 async function scrollToHighlighted(): Promise<void> {
   if (!highlightedItemId.value) return;
-  // 行挂载链多跳（数据到位 → 表格行渲染），有界重试至锚点出现；在本表格子树内
-  // 按 dataset 比对定位（不经属性选择器拼接实体 id，无注入面；组件自身子树查询，
-  // 独立路由与「更多」页签装载同效）。
   for (let hop = 0; hop < 5; hop += 1) {
     await nextTick();
     const root = tableRef.value?.$el as HTMLElement | undefined;
@@ -351,34 +308,22 @@ const columns: DataTableColumns<ItemWithDailyCost> = [
   },
 ];
 
-/** 横向滚动下限 = 固定列宽总和（列定义之后单点派生，桌面档不消费）。 */
 const tableScrollX = sumFixedColumnWidths(columns);
 
 onMounted(() => {
-  // focus 读一次：先拿 id（消费闸门内化），列表到位后生效
   focusParam.consume();
-  // 物品 store self-init + ledger:changed 信号兜底；mounted 重拉覆盖错误重试
   void itemsStore
     .refresh()
-    .catch(() => {
-      /* 失败信号已由 status 承载 */
-    })
+    .catch(() => {})
     .then(scrollToHighlighted);
-  // 关联购买交易候选：支出交易，倒序取最近 100 笔（MVP 取舍：更早的交易不在
-  // 候选内；加载失败不阻塞编辑弹窗换关）
   api
     .listTransactions({ kinds: ["expense"], limit: 100 })
     .then((r) => (expenseTxs.value = r.items))
-    .catch(() => {
-      /* 候选为空，创建退化为手填 */
-    });
-  // 本位币基准读取（设置页同款接缝）：失败不阻塞列表，保持默认 CNY 兜底
+    .catch(() => {});
   api
     .getBaseCurrency()
     .then((s) => (baseCurrencyCode.value = s.code))
-    .catch(() => {
-      /* 保持默认 CNY 兜底 */
-    });
+    .catch(() => {});
 });
 </script>
 
@@ -603,8 +548,6 @@ onMounted(() => {
 </template>
 
 <style>
-/* 来源跳转行高亮（spec #704 / issue #708）：rowProps 把类打在 NDataTable 内部
-   <tr> 上，scoped 选择器够不到，故用全局规则 + 视图专名类（不被复用为通用名）。 */
 tr.item-row-focus > td {
   background-color: rgba(245, 158, 11, 0.16);
 }

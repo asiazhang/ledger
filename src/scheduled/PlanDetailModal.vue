@@ -18,18 +18,10 @@ import { api } from "@ledger/api";
 import { useReferenceStore } from "@/stores/reference";
 import type { ScheduledTransactionDetail, ScheduledTransactionOccurrence } from "@ledger/types";
 
-// ---------------------------------------------------------------------------
-// 期次详情弹窗（issue #205）：订阅 / 分期 / 定时转账三页签通用。
-// 数据走既有计划详情命令（含期次列表）；操作仅两个——
-// - 失败期次「重试」：走既有单期执行命令，仅对 failed 状态开放（不做提前执行 pending）；
-// - 「展开更多期次」：走既有期次展开命令，查看预生成窗口之外的更远日期。
-// ---------------------------------------------------------------------------
-
 const reference = useReferenceStore();
 const message = useMessage();
 
 const emit = defineEmits<{
-  /** 重试成功后期次状态与生成交易已变化，通知清单刷新 */
   (e: "changed"): void;
 }>();
 
@@ -38,12 +30,9 @@ const planId = ref<string | null>(null);
 const loading = ref(false);
 const loadFailed = ref(false);
 const detail = ref<ScheduledTransactionDetail | null>(null);
-/** 正在重试的期次 id（防重复点击） */
 const retryingId = ref<string | null>(null);
-/** 正在展开期次（防重复点击） */
 const expanding = ref(false);
 
-/** 对外入口：打开弹窗并拉取计划详情。 */
 async function open(id: string) {
   planId.value = id;
   show.value = true;
@@ -64,7 +53,6 @@ async function load() {
   }
 }
 
-/** 期次合并视图：全量期次（含 pending/processing/completed/failed/cancelled）按日期升序。 */
 const occurrenceRows = computed<ScheduledTransactionOccurrence[]>(() => {
   const d = detail.value;
   if (!d) return [];
@@ -74,18 +62,12 @@ const occurrenceRows = computed<ScheduledTransactionOccurrence[]>(() => {
   );
 });
 
-/** 计划总期数：分期/有限期数定时转账有值；订阅与无限循环为 null。 */
 const totalOccurrences = computed<number | null>(() => {
   const ext = detail.value?.extension;
   if (!ext) return null;
   return "total_occurrences" in ext ? (ext.total_occurrences ?? null) : null;
 });
 
-/**
- * 「展开更多期次」门控：仅 active 计划可展开（后端同口径）；有限期数计划
- * 期次已全部生成（含历史各状态，与后端展开的 existing_count 同口径）时不再
- * 显示——避免无意义的空展开。
- */
 const canExpand = computed(() => {
   const d = detail.value;
   if (!d) return false;
@@ -94,7 +76,6 @@ const canExpand = computed(() => {
   return occurrenceRows.value.length < totalOccurrences.value;
 });
 
-/** 重试门控（验收）：仅 failed 期次提供重试入口。 */
 function canRetry(occ: ScheduledTransactionOccurrence): boolean {
   return occ.status === "failed";
 }
@@ -143,7 +124,6 @@ const columns = computed<DataTableColumns<ScheduledTransactionOccurrence>>(() =>
     title: t("scheduled.column.amount"),
     key: "amount",
     render: (occ) => {
-      // 期次不带币种，用计划的币种（amount 列仅在 detail 渲染时出现）
       const currency = reference.getCurrency(detail.value!.core.currency_code);
       return formatAmount(occ.amount_cents, currency);
     },
@@ -161,7 +141,6 @@ const columns = computed<DataTableColumns<ScheduledTransactionOccurrence>>(() =>
   {
     title: t("scheduled.column.actions"),
     key: "actions",
-    // 重试按钮状态门控：仅 failed 期次渲染重试入口
     render: (occ) =>
       canRetry(occ)
         ? h(

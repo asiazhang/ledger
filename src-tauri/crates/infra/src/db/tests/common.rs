@@ -1,23 +1,10 @@
-//! db 测试目录内共享脚手架：仅限本测试目录各子模块使用（跨测试模块合并不在此列，见 #250）。
-//!
-//! 建库与种子经统一测试工厂（spec #728 / issue #754 / ADR-0084 决策 7）：普通
-//! 内存库用 [`tauri_app_lib::test_support::open`]；instrument/price/fx 种子已上收工厂
-//! （`seed_instrument` / `seed_price_history` / `seed_fx_rate_history`）。本薄皮
-//! 只留 db 域特有编排：schema 约束探针（准入规则：单域特有留域薄皮，
-//! ADR-0084 决策 1）。
-
 use std::sync::{Arc, Mutex};
 
 use rusqlite::{Connection, params};
 
 use crate::db::DbState;
 
-/// 构造带 Arc<Mutex<Connection>> 的 DbState（写入口持锁形态）；建库经统一测试工厂。
 pub(super) fn write_test_state() -> DbState {
-    // 提交点后置动作接线（spec #1086 / issue #1088）：本 crate 的单测经 dev-dependency
-    // 环消费根包，拿到的是另一份 crate 实例（静态身份分离）——经 `test_support::open`
-    // 触发的注册落在那一份的写入口静态上，本份实例仍是未注册态。故这里直接把自己的
-    // 注册点接上备份域实现（幂等；函数指针只经 rusqlite 外部类型，跨实例类型相容）。
     crate::db::register_after_commit_hook(ledger_backup::after_commit_hook);
     let conn = Arc::new(Mutex::new(tauri_app_lib::test_support::open()));
     DbState {
@@ -26,19 +13,11 @@ pub(super) fn write_test_state() -> DbState {
     }
 }
 
-/// 读回自动备份调度状态（断言置脏语义用）。
 pub(super) fn dirty_state(state: &DbState) -> ledger_backup::AutoBackupState {
     let conn = state.conn.lock().unwrap_or_else(|e| e.into_inner());
     ledger_backup::get_state(&conn).expect("读调度状态")
 }
 
-// ---------------------------------------------------------------------------
-// schema 约束探针（域特有）：断言「INSERT 被库层拒绝」必须直接写行——工厂种子
-// 只产合法行、且 id 由货币对/调用方派生，表达不了约束违例形态。探针集中本薄皮
-// （守门规则 2 对薄皮豁免，ADR-0084 决策 1）；返回 Result 供断言失败分支。
-// ---------------------------------------------------------------------------
-
-/// 探针：直写一行 exchange_rates（自定义 id，供货币对唯一约束探测）。
 pub(super) fn probe_exchange_rate(
     conn: &Connection,
     id: &str,
@@ -53,7 +32,6 @@ pub(super) fn probe_exchange_rate(
     )
 }
 
-/// 探针：直写一行 price_history（自定义 id 与价格，供周唯一约束探测）。
 pub(super) fn probe_price_history(
     conn: &Connection,
     id: &str,
@@ -68,7 +46,6 @@ pub(super) fn probe_price_history(
     )
 }
 
-/// 探针：直写一行 fx_rate_history（自定义 id 与汇率，供周唯一约束探测）。
 pub(super) fn probe_fx_rate_history(
     conn: &Connection,
     id: &str,
@@ -84,8 +61,6 @@ pub(super) fn probe_fx_rate_history(
     )
 }
 
-/// 探针：直写一行 instruments（name 显式 NULL、不带 source 列——最小合法形状，
-/// 供 market CHECK 闭集探测；币种/时刻沿原探针值，为簿记非行为输入）。
 pub(super) fn probe_instrument_market(
     conn: &Connection,
     id: &str,
@@ -99,7 +74,6 @@ pub(super) fn probe_instrument_market(
     )
 }
 
-/// 探针：直写一行 instruments（source 列显式取值/NULL，供 NOT NULL 约束探测）。
 pub(super) fn probe_instrument_source(
     conn: &Connection,
     id: &str,

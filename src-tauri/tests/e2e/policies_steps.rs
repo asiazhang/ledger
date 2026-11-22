@@ -1,12 +1,3 @@
-//! 保单（Policy）BDD 步骤（issue #360 / spec #358 / ADR-0051）：
-//! 建档读回、建档校验、编辑、软删保留。
-//!
-//! 经 `policy` 域 API（`tauri_app_lib::policy`）断言外部可观察行为：创建/编辑读回、
-//! 校验错误信息、写后发失效信号（notify 注入，生产路径发 `ledger:changed`）、
-//! 软删后不进列表且库内行引用保留不置空。
-//! 保司侧 Given/When（存在保司 / 软删保司）复用 `insurers_steps.rs` 已注册步骤
-//! （issue #713 换轨：保司引用保险域自有字典，不再复用商户）。
-
 use cucumber::{then, when};
 
 use ledger_policy::PolicyInput;
@@ -18,10 +9,9 @@ use ledger_policy::{
 use crate::common::assert_last_error_contains;
 use crate::world::LedgerWorld;
 
-/// 哨兵值：「无」= 止日为空（长期/终身）/ 保额缺省 / 币种缺省。
 const NONE: &str = "无";
 
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)]
 fn build_input(
     world: &LedgerWorld,
     insurer: &str,
@@ -35,7 +25,6 @@ fn build_input(
     let insurer_id = world.insurer_id(insurer);
     let end = (!end_date.eq_ignore_ascii_case(NONE)).then(|| end_date.to_string());
     let amount = coverage.parse::<i64>().ok();
-    // 币种哨兵「无」→ None（缺省）；保额存在且币种给出时才携带（触发成对校验路径）
     let currency_code =
         (amount.is_some() && !currency.eq_ignore_ascii_case(NONE)).then(|| currency.to_string());
     PolicyInput {
@@ -50,11 +39,10 @@ fn build_input(
     }
 }
 
-/// 创建保单并要求成功；记录失效信号次数（写后发 `ledger:changed` 的 seam 断言）。
 #[when(
     expr = "创建保单 保司 {string} 保单号 {string} 险种 {string} 起日 {string} 止日 {string} 保额 {string} 币种 {string}"
 )]
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)]
 fn create_policy(
     world: &mut LedgerWorld,
     insurer: String,
@@ -85,11 +73,10 @@ fn create_policy(
     }
 }
 
-/// 尝试创建保单并捕获错误（供「应返回错误」断言；失败不发信号）。
 #[when(
     expr = "尝试创建保单 保司 {string} 保单号 {string} 险种 {string} 起日 {string} 止日 {string} 保额 {string} 币种 {string}"
 )]
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)]
 fn try_create_policy(
     world: &mut LedgerWorld,
     insurer: String,
@@ -120,11 +107,10 @@ fn try_create_policy(
     }
 }
 
-/// 编辑最近创建的保单（要求成功）。
 #[when(
     expr = "编辑保单 保司 {string} 保单号 {string} 险种 {string} 起日 {string} 止日 {string} 保额 {string} 币种 {string}"
 )]
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)]
 fn update_policy(
     world: &mut LedgerWorld,
     insurer: String,
@@ -157,11 +143,10 @@ fn update_policy(
     }
 }
 
-/// 尝试编辑最近创建的保单并捕获错误。
 #[when(
     expr = "尝试编辑保单 保司 {string} 保单号 {string} 险种 {string} 起日 {string} 止日 {string} 保额 {string} 币种 {string}"
 )]
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)]
 fn try_update_policy(
     world: &mut LedgerWorld,
     insurer: String,
@@ -197,7 +182,6 @@ fn try_update_policy(
     }
 }
 
-/// 软删最近创建的保单（要求成功）。
 #[when(expr = "软删第 {int} 张保单")]
 fn delete_policy(world: &mut LedgerWorld, n: usize) {
     let id = world
@@ -214,7 +198,6 @@ fn delete_policy(world: &mut LedgerWorld, n: usize) {
     }
 }
 
-/// 尝试软删最近创建的保单并捕获错误（已删再删场景）。
 #[when(expr = "尝试软删第 {int} 张保单")]
 fn try_delete_policy(world: &mut LedgerWorld, _n: usize) {
     let id = world
@@ -232,7 +215,6 @@ fn try_delete_policy(world: &mut LedgerWorld, _n: usize) {
     }
 }
 
-/// 刷新保单列表快照（Then 断言数据源）。
 #[when(expr = "记住第 {int} 张保单的创建时间")]
 fn remember_created_at(world: &mut LedgerWorld, n: usize) {
     world.policy.policies_list =
@@ -245,10 +227,6 @@ fn remember_created_at(world: &mut LedgerWorld, n: usize) {
     world.policy.remembered_policy_created_at = Some(policy.created_at.clone());
 }
 
-// ---------------------------------------------------------------------------
-// Then 断言
-// ---------------------------------------------------------------------------
-
 #[then(expr = "保单列表应包含 {int} 张保单")]
 fn check_list_count(world: &mut LedgerWorld, expected: usize) {
     world.policy.policies_list =
@@ -260,7 +238,6 @@ fn check_list_count(world: &mut LedgerWorld, expected: usize) {
     );
 }
 
-/// 取第 n 张（1 起）保单快照的辅助。
 fn nth(world: &LedgerWorld, n: usize) -> &ledger_policy::Policy {
     world
         .policy
@@ -278,7 +255,6 @@ fn check_identity(
     product: String,
 ) {
     let policy = nth(world, n);
-    // 保司以保司名断言（保险域自有字典，ADR-0082）
     let insurer_id = world.insurer_id(&insurer);
     assert_eq!(policy.insurer_id, insurer_id, "保司引用不匹配");
     assert_eq!(policy.policy_number, number, "保单号不匹配");
