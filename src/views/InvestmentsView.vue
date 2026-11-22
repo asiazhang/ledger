@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, type LocationQuery } from "vue-router";
-import { NAlert, NButton, NIcon, NSpace, NTabPane, NTabs, NText } from "naive-ui";
+import { NAlert, NButton, NIcon, NTabPane, NTabs, NText } from "naive-ui";
 import {
   SpeedometerOutline,
   StatsChartOutline,
@@ -93,7 +93,7 @@ watch(
 </script>
 
 <template>
-  <NSpace vertical :size="16">
+  <div class="viewport-stack-16">
     <!-- 价格过期提示（issue #1190）：有过期标的存在时出现，同步后再查即消失
          （价格失效信号驱动重查）。文案含过期数量 + 判定阈值，动作直达标的页签
          的既有「同步标的信息」入口；分工说明（issue #1377）：导向的入口只修
@@ -179,7 +179,7 @@ watch(
         <InstrumentBrowser :focus-instrument-id="focusInstrumentId" />
       </NTabPane>
     </NTabs>
-  </NSpace>
+  </div>
 </template>
 
 <style scoped>

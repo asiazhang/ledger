@@ -17,9 +17,7 @@ body {
   overscroll-behavior: none;
 }
 
-/* naive-ui 滚动容器：NLayout 的 scroll-container 与 NScrollbar 的 container */
-.n-layout-scroll-container,
-.n-scrollbar-container {
+.n-layout-scroll-container {
   overscroll-behavior: none;
 }
 
@@ -182,4 +180,126 @@ textarea,
  */
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+.app-page-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  box-sizing: border-box;
+  min-height: 100%;
+}
+
+.app-page-shell > .page-title {
+  flex-shrink: 0;
+}
+
+.app-page-shell:has(.viewport-table-view) {
+  height: 100%;
+}
+
+.viewport-stack-16 {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.app-page-shell .viewport-stack-16:has(.viewport-table-view) {
+  flex: 1;
+  min-height: 0;
+}
+
+.app-page-shell .n-tabs:has(.viewport-table-view),
+.app-page-shell .n-tabs:has(.viewport-table-view) > .n-tabs-pane-wrapper,
+.app-page-shell .n-tabs:has(.viewport-table-view) > .n-tab-pane:has(.viewport-table-view),
+.app-page-shell
+  .n-tabs:has(.viewport-table-view)
+  > .n-tabs-pane-wrapper
+  > .n-tab-pane:has(.viewport-table-view) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.viewport-table-view {
+  display: flex;
+  flex-direction: column;
+}
+
+.viewport-gap-12 {
+  gap: 12px;
+}
+
+.viewport-gap-16 {
+  gap: 16px;
+}
+
+.app-page-shell .viewport-table-view {
+  flex: 1;
+  min-height: 0;
+}
+
+.app-page-shell .viewport-table-view > * {
+  flex-shrink: 0;
+}
+
+.app-page-shell .viewport-table-slot {
+  flex: 1;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-page-shell .viewport-table-card {
+  flex: 1;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-page-shell .viewport-table-card > .n-card-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-page-shell .viewport-table-card-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-page-shell .viewport-table-card-body > * {
+  flex-shrink: 0;
+}
+
+.app-page-shell .viewport-table-spin {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-page-shell .viewport-table-spin > .n-spin-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-page-shell .viewport-table-slot > .n-data-table,
+.app-page-shell .viewport-table-card > .n-card-content > .n-data-table,
+.app-page-shell .viewport-table-card-body > .n-data-table {
+  flex: 1;
+  min-height: 0;
+}
+
+.app-page-shell .n-data-table--flex-height > .n-data-table-wrapper,
+.app-page-shell .n-data-table--flex-height > .n-data-table-wrapper > .n-data-table-base-table {
+  min-height: 0;
 }

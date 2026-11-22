@@ -225,7 +225,7 @@ const tableScrollX = sumFixedColumnWidths(columns);
 </script>
 
 <template>
-  <NSpace vertical :size="16">
+  <div class="viewport-table-view viewport-gap-16">
     <NCard :title="t('settings.merchants.addTitle')" size="small">
       <NForm label-placement="left" :show-feedback="false" inline size="small">
         <NFormItem :label="t('settings.merchants.form.name')">
@@ -241,8 +241,8 @@ const tableScrollX = sumFixedColumnWidths(columns);
       </NForm>
     </NCard>
 
-    <NCard :title="t('settings.merchants.listTitle')" size="small">
-      <NSpace vertical :size="12">
+    <NCard :title="t('settings.merchants.listTitle')" size="small" class="viewport-table-card">
+      <div class="viewport-table-card-body">
         <NSpace align="center">
           <NInput
             v-model:value="searchTerm"
@@ -254,17 +254,20 @@ const tableScrollX = sumFixedColumnWidths(columns);
             {{ t("settings.merchants.showDeleted") }}
           </NCheckbox>
         </NSpace>
-        <NDataTable
-          :columns="columns"
-          :data="displayRows"
-          :bordered="false"
-          size="small"
-          :row-key="(m: MerchantRow) => m.id"
-          :scroll-x="isMobileTier ? tableScrollX : undefined"
-          :pagination="pagination"
-          @update:sorter="resetPageOnSort"
-        />
-      </NSpace>
+        <div class="viewport-table-slot">
+          <NDataTable
+            :columns="columns"
+            :data="displayRows"
+            :bordered="false"
+            size="small"
+            :flex-height="!isMobileTier"
+            :row-key="(m: MerchantRow) => m.id"
+            :scroll-x="isMobileTier ? tableScrollX : undefined"
+            :pagination="pagination"
+            @update:sorter="resetPageOnSort"
+          />
+        </div>
+      </div>
     </NCard>
 
     <!-- 商户编辑弹窗。显示由「意图非空」派生（无独立 show 布尔），关闭（✕ / ESC /
@@ -275,5 +278,5 @@ const tableScrollX = sumFixedColumnWidths(columns);
       :merchant="editIntent?.merchant ?? null"
       @update:show="(v: boolean) => (v ? undefined : closeEdit())"
     />
-  </NSpace>
+  </div>
 </template>

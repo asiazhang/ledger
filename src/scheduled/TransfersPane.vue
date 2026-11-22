@@ -290,8 +290,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <NSpace vertical :size="16">
-    <NCard :title="t('scheduled.pane.transferList')" size="small">
+  <div class="viewport-table-view viewport-gap-16">
+    <NCard :title="t('scheduled.pane.transferList')" size="small" class="viewport-table-card">
       <template #header-extra>
         <NSpace :size="12">
           <NButtonGroup size="small">
@@ -321,6 +321,7 @@ onMounted(() => {
         :loading="loading"
         :bordered="false"
         size="small"
+        :flex-height="!isMobileTier"
         :row-key="(row: TransferRow) => row.plan.core.id"
       />
     </NCard>
@@ -428,5 +429,5 @@ onMounted(() => {
 
     <!-- 期次详情弹窗（issue #205）：三页签通用 -->
     <PlanDetailModal ref="planDetailRef" @changed="onDetailChanged" />
-  </NSpace>
+  </div>
 </template>

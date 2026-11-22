@@ -213,7 +213,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <NSpace vertical :size="16">
+  <div class="viewport-table-view viewport-gap-16">
     <NCard size="small">
       <NSpace justify="space-between" align="center">
         <span>
@@ -227,7 +227,7 @@ onMounted(() => {
       </NSpace>
     </NCard>
 
-    <NCard :title="listTitle" size="small">
+    <NCard :title="listTitle" size="small" class="viewport-table-card">
       <template #header-extra>
         <NRadioGroup
           :value="physicalAssetsStore.statusFilter"
@@ -248,6 +248,7 @@ onMounted(() => {
         :data="physicalAssetsStore.assets"
         :bordered="false"
         size="small"
+        :flex-height="!isMobileTier"
         :scroll-x="isMobileTier ? tableScrollX : undefined"
       >
         <template #empty>
@@ -283,5 +284,5 @@ onMounted(() => {
       :asset="disposeIntent?.asset ?? null"
       @update:show="(v: boolean) => (v ? undefined : closeDispose())"
     />
-  </NSpace>
+  </div>
 </template>

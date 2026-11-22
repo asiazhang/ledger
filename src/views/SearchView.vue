@@ -185,7 +185,7 @@ const pagination = computed(() => ({
 </script>
 
 <template>
-  <NSpace vertical :size="12">
+  <div class="viewport-table-view viewport-gap-12">
     <NInput
       v-model:value="keyword"
       :placeholder="t('search.keywordPlaceholder')"
@@ -241,7 +241,7 @@ const pagination = computed(() => ({
       </template>
       <!-- 备注列为弹性列，表格铺满容器；窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限。
            表格容器承载单元格动作的表级事件委托（issue #2189，见 onTableCellClick） -->
-      <div v-else @click="onTableCellClick">
+      <div v-else class="viewport-table-slot" @click="onTableCellClick">
         <NDataTable
           :columns="columns"
           :data="displayRows"
@@ -249,11 +249,12 @@ const pagination = computed(() => ({
           :bordered="false"
           size="small"
           remote
+          :flex-height="!isMobile"
           :scroll-x="scrollX"
           :pagination="pagination"
         />
       </div>
     </template>
     <NEmpty v-else :description="t('search.emptyPlaceholder')" />
-  </NSpace>
+  </div>
 </template>

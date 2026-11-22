@@ -413,7 +413,7 @@ function activateCard(row: Transaction): void {
        节点，包裹 div 0 高却仍是 flex 子项，各占一个 12px gap 槽位——表格上方凭空多出
        6×12+12 ≈ 84px 空白。关闭弹层经 teleport 挂 body，本就不参与布局流；
        wrap-item=false 后子项直接作 flex 子元素，幻影 div 不再产生。 -->
-  <NSpace vertical :size="12" :wrap-item="false">
+  <div class="viewport-table-view viewport-gap-12">
     <!-- 过滤行（第一行）：账户（涉及账户语义，可清除）+ 商户（可清除，issue #191）+ 类型（可清除）+ 清除筛选。
          任意起止日期筛选已自交易页移除（搜索页保留，issue #381）；
          任一条件变化即重新查询并回到第 1 页；手动改动不同步回 URL
@@ -679,7 +679,7 @@ function activateCard(row: Transaction): void {
     <!-- 备注列为弹性列（transaction-columns 中不设 width），表格始终铺满容器；
          窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限。
          表格容器承载单元格动作的表级事件委托（issue #2189，见 onTableCellClick） -->
-    <div v-else @click="onTableCellClick">
+    <div v-else class="viewport-table-slot" @click="onTableCellClick">
       <NDataTable
         :columns="columns"
         :data="displayRows"
@@ -688,6 +688,7 @@ function activateCard(row: Transaction): void {
         :bordered="false"
         size="small"
         remote
+        :flex-height="!isMobile"
         :row-props="rowProps"
         :scroll-x="scrollX"
         :pagination="false"
@@ -734,7 +735,7 @@ function activateCard(row: Transaction): void {
         </template>
       </NPagination>
     </div>
-  </NSpace>
+  </div>
   <!-- 记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5）：点开大号类型选择
        轻弹层（可用类型 = 创建闭集单源 availableCreateKinds，ADR-0135 决策 5 / issue #1782
        收窄为支出/收入/转账），经弹窗意图编排的记一笔意图（携带类型）进对应表单；零表单内部改造。
