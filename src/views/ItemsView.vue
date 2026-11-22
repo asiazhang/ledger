@@ -328,7 +328,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <NSpace vertical :size="16">
+  <div class="viewport-table-view viewport-gap-16">
     <!-- 创建唯一入口提示（issue #207）：本页不提供手动新增，物品只能经交易右键「加入物品」创建 -->
     <NAlert type="info" :show-icon="true" data-testid="item-create-hint">
       {{ t("items.createHint") }}
@@ -344,7 +344,7 @@ onMounted(() => {
       </NButton>
     </NAlert>
 
-    <NCard :title="t('items.listTitle')" size="small">
+    <NCard :title="t('items.listTitle')" size="small" class="viewport-table-card">
       <NDataTable
         ref="tableRef"
         :columns="columns"
@@ -352,6 +352,7 @@ onMounted(() => {
         :row-props="rowProps"
         :bordered="false"
         size="small"
+        :flex-height="!isMobileTier"
         :scroll-x="isMobileTier ? tableScrollX : undefined"
       >
         <template #empty>
@@ -544,7 +545,7 @@ onMounted(() => {
         </NDescriptionsItem>
       </NDescriptions>
     </AppModal>
-  </NSpace>
+  </div>
 </template>
 
 <style>

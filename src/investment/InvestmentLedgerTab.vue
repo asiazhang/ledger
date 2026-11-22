@@ -19,6 +19,7 @@ import { useLoadable } from "@ledger/loadable";
 import { t } from "@ledger/i18n";
 import { formatAmount, formatPrice, formatQuantity } from "@ledger/money";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
+import { useWindowTier } from "@ledger/window-tier";
 import { PAGE_SIZE_OPTIONS } from "@ledger/utils/pagination";
 import { kindSemanticColor } from "@ledger/theme/semantic-colors";
 import type { NullableDateRange } from "@ledger/utils/time-period";
@@ -346,6 +347,9 @@ const pagination = computed<PaginationProps>(() => ({
   onUpdatePageSize: (pageSize: number) => session.setDetailPageSize(pageSize),
 }));
 
+const windowTier = useWindowTier();
+const isMobileTier = computed(() => windowTier.value === "mobile");
+
 const emptyDescription = computed(() =>
   filtersActive.value ? t("investments.ledger.emptyFiltered") : t("investments.ledger.empty"),
 );
@@ -384,7 +388,7 @@ function onCreated() {
 </script>
 
 <template>
-  <NSpace vertical :size="12">
+  <div class="viewport-table-view viewport-gap-12">
     <!-- 手动筛选三维 + 标的下钻只读入口（ADR-0135 决策 3 及其修订注记 / issue #1780 / #1807）：
          类型多选（投资 kind 子集）+ 账户（涉及账户语义）+ 日期（时间范围快捷选择）；
          标的维度无手动控件，仅 ?instrument= 深链落账。立即生效，翻页归零由 store 内化。 -->
@@ -436,29 +440,32 @@ function onCreated() {
         </NButton>
       </NButtonGroup>
     </NSpace>
-    <NDataTable
-      :columns="columns"
-      :data="rows"
-      :loading="loading"
-      :bordered="false"
-      size="small"
-      remote
-      :row-key="(r: InvestmentTransactionRow) => r.id"
-      :row-props="rowProps"
-      :scroll-x="scrollX"
-      :pagination="pagination"
-    >
-      <!-- 空态：筛选无结果与暂无数据分型文案；加载期间不渲染空态节点（与加载态
-           区分，主列表移动档同款 v-if 形态） -->
-      <template #empty>
-        <NEmpty
-          v-if="!loading"
-          :description="emptyDescription"
-          size="small"
-          data-testid="ledger-empty"
-        />
-      </template>
-    </NDataTable>
+    <div class="viewport-table-slot">
+      <NDataTable
+        :columns="columns"
+        :data="rows"
+        :loading="loading"
+        :bordered="false"
+        size="small"
+        remote
+        :flex-height="!isMobileTier"
+        :row-key="(r: InvestmentTransactionRow) => r.id"
+        :row-props="rowProps"
+        :scroll-x="scrollX"
+        :pagination="pagination"
+      >
+        <!-- 空态：筛选无结果与暂无数据分型文案；加载期间不渲染空态节点（与加载态
+             区分，主列表移动档同款 v-if 形态） -->
+        <template #empty>
+          <NEmpty
+            v-if="!loading"
+            :description="emptyDescription"
+            size="small"
+            data-testid="ledger-empty"
+          />
+        </template>
+      </NDataTable>
+    </div>
     <!-- 创建弹窗（记买入/记卖出共用一枚）：标题标明入口选定类型，内嵌 TransactionForm
          （按 kind 分派 InvestmentForm，基金金额权威/非基金单价权威，零表单内部改造）；
          提交成功关窗并刷新明细列表（翻回第 1 页）；显示开关由模块意图派生，序号作表单 key
@@ -482,7 +489,7 @@ function onCreated() {
         @created="onCreated"
       />
     </AppModal>
-  </NSpace>
+  </div>
   <!-- 行右键菜单（与主列表同构，issue #151 / #550）：手动定位弹出；开合上报经薄封装
        attrs watch 自动生效（`:show` 绑定照旧）。 -->
   <AppDropdown

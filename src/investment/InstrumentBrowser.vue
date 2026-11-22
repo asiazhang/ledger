@@ -297,7 +297,7 @@ const browseScrollX = computed(() => sumFixedColumnWidths(instrumentBrowseColumn
 </script>
 
 <template>
-  <NSpace vertical :size="12">
+  <div class="viewport-table-view viewport-gap-12">
     <!-- 同步确定进度条（issue #897）：列表顶部就近反馈，与盈亏页同一展示组件 -->
     <SyncProgressBar :progress="progress" />
     <NSpace align="center" :size="12">
@@ -348,28 +348,31 @@ const browseScrollX = computed(() => sumFixedColumnWidths(instrumentBrowseColumn
     <NText v-if="quoteMessage" type="success" data-testid="manual-quote-result">
       {{ quoteMessage }}
     </NText>
-    <NDataTable
-      :columns="instrumentBrowseColumns"
-      :data="instruments"
-      :loading="loading"
-      :bordered="false"
-      size="small"
-      remote
-      :scroll-x="isMobileTier ? browseScrollX : undefined"
-      :pagination="pagination"
-      :row-class-name="rowClassName"
-    >
-      <!-- 空态两态区分（issue #1193）：全部标的不在场 vs 筛选未命中；
-           testid 随态切换，测试按用户可观察文案断言。加载门与持仓页同款：
-           首载/筛选重拉在途不渲染空态，否则空库会先闪现「暂无标的」再出列表 -->
-      <template #empty>
-        <NEmpty
-          v-if="!loading"
-          :description="emptyDescription"
-          :data-testid="hasActiveFilter ? 'instruments-no-match' : 'instruments-empty'"
-        />
-      </template>
-    </NDataTable>
+    <div class="viewport-table-slot">
+      <NDataTable
+        :columns="instrumentBrowseColumns"
+        :data="instruments"
+        :loading="loading"
+        :bordered="false"
+        size="small"
+        remote
+        :flex-height="!isMobileTier"
+        :scroll-x="isMobileTier ? browseScrollX : undefined"
+        :pagination="pagination"
+        :row-class-name="rowClassName"
+      >
+        <!-- 空态两态区分（issue #1193）：全部标的不在场 vs 筛选未命中；
+             testid 随态切换，测试按用户可观察文案断言。加载门与持仓页同款：
+             首载/筛选重拉在途不渲染空态，否则空库会先闪现「暂无标的」再出列表 -->
+        <template #empty>
+          <NEmpty
+            v-if="!loading"
+            :description="emptyDescription"
+            :data-testid="hasActiveFilter ? 'instruments-no-match' : 'instruments-empty'"
+          />
+        </template>
+      </NDataTable>
+    </div>
 
     <!-- 添加投资标的（issue #697 / spec #690；六通道修订 #826）：标的创建唯一
          入口——市场必选录入通道 + 按代码查询（命中自动识别类型并回填名称/最新价）；
@@ -381,7 +384,7 @@ const browseScrollX = computed(() => sumFixedColumnWidths(instrumentBrowseColumn
     <!-- 手动报价（issue #291 / ADR-0036）：日期 + 价格弹窗；录价成功后现价列
          经价格失效信号自动刷新（本组件顶部既有订阅），此处只记页面级回执 -->
     <ManualPriceModal v-model:show="quoteOpen" :instrument="quoteTarget" @quoted="onQuoted" />
-  </NSpace>
+  </div>
 </template>
 
 <style>

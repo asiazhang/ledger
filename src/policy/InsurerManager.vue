@@ -20,10 +20,13 @@ import { useReferenceStore } from "@/stores/reference";
 import { useModalIntent } from "@ledger/modal-intent";
 import { matchLabel } from "@ledger/utils/pinyin-filter";
 import { t } from "@ledger/i18n";
+import { useWindowTier } from "@ledger/window-tier";
 import type { Insurer, InsurerInput } from "@ledger/types";
 
 const reference = useReferenceStore();
 const message = useMessage();
+const windowTier = useWindowTier();
+const isMobileTier = computed(() => windowTier.value === "mobile");
 
 const rows = computed<Insurer[]>(() => reference.insurers);
 
@@ -123,7 +126,7 @@ const columns: DataTableColumn<Insurer>[] = [
 </script>
 
 <template>
-  <NSpace vertical :size="16">
+  <div class="viewport-table-view viewport-gap-16">
     <NCard :title="t('policies.insurers.addTitle')" size="small">
       <NForm label-placement="left" :show-feedback="false" inline size="small">
         <NFormItem :label="t('policies.insurers.form.name')">
@@ -137,8 +140,8 @@ const columns: DataTableColumn<Insurer>[] = [
       </NForm>
     </NCard>
 
-    <NCard :title="t('policies.insurers.listTitle')" size="small">
-      <NSpace vertical :size="12">
+    <NCard :title="t('policies.insurers.listTitle')" size="small" class="viewport-table-card">
+      <div class="viewport-table-card-body">
         <NSpace align="center">
           <NInput
             v-model:value="searchTerm"
@@ -150,14 +153,17 @@ const columns: DataTableColumn<Insurer>[] = [
             {{ t("policies.insurers.showDeleted") }}
           </NCheckbox>
         </NSpace>
-        <NDataTable
-          :columns="columns"
-          :data="displayRows"
-          :bordered="false"
-          size="small"
-          :row-key="(i: Insurer) => i.id"
-        />
-      </NSpace>
+        <div class="viewport-table-slot">
+          <NDataTable
+            :columns="columns"
+            :data="displayRows"
+            :bordered="false"
+            size="small"
+            :flex-height="!isMobileTier"
+            :row-key="(i: Insurer) => i.id"
+          />
+        </div>
+      </div>
     </NCard>
 
     <!-- 保司编辑弹窗。显示由「意图非空」派生（无独立 show 布尔），关闭（✕ / ESC /
@@ -168,5 +174,5 @@ const columns: DataTableColumn<Insurer>[] = [
       :insurer="editIntent?.insurer ?? null"
       @update:show="(v: boolean) => (v ? undefined : closeEdit())"
     />
-  </NSpace>
+  </div>
 </template>

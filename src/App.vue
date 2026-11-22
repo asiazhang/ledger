@@ -21,7 +21,6 @@ import {
   NLayoutContent,
   NMenu,
   NIcon,
-  NSpace,
   NButton,
   darkTheme,
   zhCN,
@@ -395,16 +394,14 @@ const pageTitle = computed(() => (typeof route.name === "string" ? viewLabel(rou
                   @clickoutside="sortMenuShow = false"
                 />
               </NLayoutSider>
-              <NLayout>
-                <NLayoutContent content-style="padding: 20px;" :native-scrollbar="false">
-                  <NSpace vertical :size="16">
-                    <!-- 屏名即 h1（tasteskill app 规则：每个屏有且仅有一个 h1，
-                         且它就是屏名）；所有视图共用壳层这一处，不在各页再写一份标题 -->
-                    <h1 class="page-title">{{ pageTitle }}</h1>
-                    <RouterView />
-                  </NSpace>
-                </NLayoutContent>
-              </NLayout>
+              <NLayoutContent content-style="padding: 0;" style="height: 100%">
+                <div class="app-page-shell">
+                  <!-- 屏名即 h1（tasteskill app 规则：每个屏有且仅有一个 h1，
+                       且它就是屏名）；所有视图共用壳层这一处，不在各页再写一份标题 -->
+                  <h1 class="page-title">{{ pageTitle }}</h1>
+                  <RouterView />
+                </div>
+              </NLayoutContent>
             </NLayout>
           </template>
           <template v-else>

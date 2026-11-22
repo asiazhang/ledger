@@ -24,9 +24,12 @@ import {
   type HoldingsSortColumn,
 } from "@/investment/useHoldingsFilter";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
+import { useWindowTier } from "@ledger/window-tier";
 
 const reference = useReferenceStore();
 const appStore = useAppStore();
+const windowTier = useWindowTier();
+const isMobileTier = computed(() => windowTier.value === "mobile");
 
 const { rows, loading, refresh, cumulativePnl, nativeCurrency } = usePortfolioOverview();
 const { instrumentMwr } = useMoneyWeightedReturn();
@@ -254,7 +257,11 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
 </script>
 
 <template>
-  <NCard :title="t('investments.holdings.title')" size="small">
+  <NCard
+    :title="t('investments.holdings.title')"
+    size="small"
+    class="viewport-table-view viewport-table-card"
+  >
     <template #header-extra>
       <NButton
         type="primary"
@@ -267,8 +274,8 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
       </NButton>
     </template>
 
-    <NSpin :show="loading">
-      <NSpace vertical :size="12">
+    <NSpin :show="loading" class="viewport-table-spin">
+      <div class="viewport-table-card-body">
         <!-- 同步确定进度条（issue #897）：卡顶就近反馈，与标的页同一展示组件 -->
         <SyncProgressBar :progress="progress" />
 
@@ -332,20 +339,22 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
             :description="t('investments.holdings.filterNoMatch')"
             data-testid="holdings-no-match"
           />
-          <NDataTable
-            v-else
-            :columns="overviewColumns"
-            :data="filteredRows"
-            :bordered="false"
-            size="small"
-            :row-key="(r: PortfolioRow) => r.holdingId"
-            :scroll-x="scrollX"
-            :pagination="pagination"
-            :paginate-single-page="false"
-            @update:sorter="setSorter"
-          />
+          <div v-else class="viewport-table-slot">
+            <NDataTable
+              :columns="overviewColumns"
+              :data="filteredRows"
+              :bordered="false"
+              size="small"
+              :flex-height="!isMobileTier"
+              :row-key="(r: PortfolioRow) => r.holdingId"
+              :scroll-x="scrollX"
+              :pagination="pagination"
+              :paginate-single-page="false"
+              @update:sorter="setSorter"
+            />
+          </div>
         </template>
-      </NSpace>
+      </div>
     </NSpin>
 
     <!-- 缺价行「录价」引导打开既有录价弹窗（issue #1193）：与标的页行内「录价」

@@ -208,7 +208,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <NSpace vertical :size="16">
+  <div class="viewport-table-view viewport-gap-16">
     <NCard size="small">
       <NSpace justify="end">
         <NButton type="primary" data-testid="policy-new" @click="openCreate">
@@ -217,7 +217,7 @@ onMounted(() => {
       </NSpace>
     </NCard>
 
-    <NCard :title="listTitle" size="small">
+    <NCard :title="listTitle" size="small" class="viewport-table-card">
       <NDataTable
         ref="tableRef"
         :columns="columns"
@@ -225,6 +225,7 @@ onMounted(() => {
         :row-props="rowProps"
         :bordered="false"
         size="small"
+        :flex-height="!isMobileTier"
         :scroll-x="isMobileTier ? tableScrollX : undefined"
       >
         <template #empty>
@@ -243,7 +244,7 @@ onMounted(() => {
       :editing="formIntent?.mode === 'edit' ? formIntent.policy : null"
       @update:show="(v: boolean) => (v ? undefined : closeForm())"
     />
-  </NSpace>
+  </div>
 </template>
 
 <style>

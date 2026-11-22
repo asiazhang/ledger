@@ -340,8 +340,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <NSpin :show="loading">
-    <NSpace vertical :size="16">
+  <NSpin :show="loading" class="viewport-table-spin">
+    <div class="viewport-table-view viewport-gap-16">
       <NCard :title="t('budget.create.title')" size="small">
         <!-- 新增预算表单按窗口分级分档（issue #848）：桌面档行内横排（既有布局一字
              不动）；移动档纵排堆叠（标签上置 + 控件满宽，行内横排窄屏必溢出），
@@ -432,10 +432,16 @@ onMounted(() => {
         </template>
       </NCard>
 
-      <NCard :title="t('budget.list.title')" size="small">
-        <NDataTable :columns="columns" :data="list" :bordered="false" size="small" />
+      <NCard :title="t('budget.list.title')" size="small" class="viewport-table-card">
+        <NDataTable
+          :columns="columns"
+          :data="list"
+          :bordered="false"
+          size="small"
+          :flex-height="!isMobileTier"
+        />
       </NCard>
-    </NSpace>
+    </div>
 
     <!-- 编辑弹窗（issue #184 金额 / issue #1946 放开周期）：金额与周期可改，
          分类只读。显示由「意图非空」派生（无独立 show 布尔），关闭统一经工厂
