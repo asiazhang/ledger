@@ -79,12 +79,20 @@ pub async fn search_instruments_handler(
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(
+    description = "标的创建请求体（`POST /api/v1/instruments`，issue #296 / ADR-0037）。\n\n与 IPC 侧 `InstrumentInput` 的差异仅在报价币种可省：缺省按市场推导（沪深→CNY、港→HKD、美股三市场→USD、未知→CNY，ADR-0081），显式传参可覆盖。"
+)]
 pub struct InstrumentCreateInput {
+    #[doc = "标的代码（必填；源数据只有名称时以名称充当代码，ADR-0037 决策 3）"]
     symbol: String,
     #[serde(rename = "type")]
+    #[doc = "标的类型（闭集：stock/fund/bond/etf/other；五类全开，不经自建标的的 UI 白名单）"]
     kind: InstrumentType,
+    #[doc = "标的名称（可选）"]
     name: Option<String>,
+    #[doc = "交易市场（可选，缺省 unknown；sh / sz / hk / nasdaq / nyse / amex）。fund 类型市场恒 unknown（场外基金无交易所市场概念，ADR-0038）：携带非 unknown 市场即 400（`instrument.fund-market-forbidden`）。"]
     market: Option<String>,
+    #[doc = "报价币种（可选；缺省按市场推导：沪深→CNY、港→HKD、美股三市场→USD、未知→CNY）"]
     currency_code: Option<String>,
 }
 

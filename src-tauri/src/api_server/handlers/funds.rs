@@ -16,11 +16,19 @@ pub async fn fetch_fund_quote_for_api(state: &ApiState, code: &str) -> Result<Qu
 }
 
 #[derive(Debug, serde::Serialize, ToSchema)]
+#[schema(
+    description = "基金查询响应（`GET /api/v1/funds/{code}`，issue #304 / ADR-0039 决策 2 / #1568 换源）：统一报价（行情接入载荷，ADR-0103）的场外通道投影——净值已是万分之一元价格刻度（换算在访问层，ADR-0038），AI 供校验「代码 → 名称」映射与查最新净值。已终止（清盘）基金同样可查（官方披露兜底，不再误报查无此码）。"
+)]
 pub struct FundLookup {
+    #[doc = "基金代码（6 位数字）"]
     code: String,
+    #[doc = "数据源权威名称（如「华夏成长混合」）"]
     name: String,
+    #[doc = "已弃用，恒返回空串：基金分类在替代源无来源（ADR-0130 决策 8），字段保留为已发布契约的一部分，展示层可不渲染。"]
     fund_class: String,
+    #[doc = "最新单位净值（万分之一元，元 × 10000，ADR-0038 价格刻度）；未公布为 null"]
     nav_cents: Option<i64>,
+    #[doc = "净值日期（ISO 日期）；未公布为 null"]
     nav_date: Option<String>,
 }
 

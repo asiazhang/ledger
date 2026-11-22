@@ -28,13 +28,23 @@ pub struct StockLookupQuery {
 }
 
 #[derive(Debug, serde::Serialize, ToSchema)]
+#[schema(
+    description = "股票查询响应（`GET /api/v1/stocks/{code}`，issue #693/#696 / ADR-0081 决策 1/2）：投影对齐基金查询（FundLookup）——代码、数据源权威名称、精确市场、币种、最新价（万分之一元价格刻度）、价格日期、类型提示。"
+)]
 pub struct StockLookup {
+    #[doc = "归一化代码（港股左补零至 5 位，美股大写，如 aapl → \"AAPL\"）"]
     code: String,
+    #[doc = "数据源权威名称（如「贵州茅台」）"]
     name: String,
+    #[doc = "精确市场（sh / sz / hk / nasdaq / nyse / amex；美股由行情源自报交易所归属）"]
     market: String,
+    #[doc = "报价币种（按市场推导：沪深→CNY、港→HKD、美股→USD，ADR-0037 决策 2 / ADR-0081）"]
     currency_code: String,
+    #[doc = "最新价（万分之一元，元 × 10000，ADR-0038 价格刻度）；停牌/无有效报价为 null"]
     price_cents: Option<i64>,
+    #[doc = "价格日期（交易所当地交易日，ISO 日期，ADR-0130 决策 5）；无有效时间戳为 null"]
     price_date: Option<String>,
+    #[doc = "类型提示（stock 股票 / etf 场内基金类；行情类型码单点探测，ADR-0081 判据 / ADR-0130 决策 3）"]
     kind_hint: InstrumentType,
 }
 

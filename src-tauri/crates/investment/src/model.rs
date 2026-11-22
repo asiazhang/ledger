@@ -85,9 +85,13 @@ pub struct Instrument {
     pub updated_at: String,
     pub version: i64,
     pub device_id: String,
+    #[doc = "字典条目来源（自建标的，ADR-0036 决策 2）：'manual' 手动 | 历史同步行保留原值，与价格侧 source 语义正交；来源随行终身不变（upsert/同步均不改写）。"]
     pub source: String,
+    #[doc = "最新市场价格（万分之一元，0.0001 元，ADR-0038 价格刻度），同步来源；无行情时为空。"]
     pub price_cents: Option<i64>,
+    #[doc = "是否持有该标的（有当前持仓批次 remaining_quantity > 0，派生自 security_lots）。"]
     pub invested: bool,
+    #[doc = "价格写入通道（派生事实，不落库，issue #1060）：后端按类型 × 市场 × 代码单点派生（见 [`super::channel`]），前端据此开放录价入口与展示价格来源，不再自行按类型与市场推断。"]
     pub price_channel: PriceChannel,
 }
 
@@ -114,9 +118,12 @@ pub struct InstrumentListFilter {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+#[schema(description = "标的列表分页结果。")]
 pub struct InstrumentListResult {
     pub items: Vec<Instrument>,
+    #[doc = "满足过滤条件的总条数（用于分页条）。"]
     pub total: i64,
+    #[doc = "焦点定位所在页（issue #1907，读投影只增字段）：仅 `anchor_id` 命中结果集时携带（1 起）；缺省不序列化，旧消费方零破坏。"]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor_page: Option<usize>,
 }

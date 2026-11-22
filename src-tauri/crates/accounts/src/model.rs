@@ -84,10 +84,15 @@ pub struct Account {
     pub version: i64,
     pub device_id: String,
     pub is_deleted: bool,
+    #[doc = "黑洞账户标志：对用户侧列表/余额/下拉选择器隐藏，但交易仍参与交易列表与报表。"]
     pub is_hidden: bool,
+    #[doc = "归档收纳态：`true` = 已归档，只收窄账户页主表与编辑选择面两处呈现；余额、余额合计与净资产照旧计入，读面不过滤。"]
     pub is_archived: bool,
+    #[doc = "信用额度（整数分，仅信用卡；`None` = 未设置）。档案字段，不参与余额与净资产。"]
     pub credit_limit_cents: Option<i64>,
+    #[doc = "账单日（1–31 的每月第 N 日声明值，仅信用卡；`None` = 未设置）。"]
     pub statement_day: Option<i64>,
+    #[doc = "还款日（1–31 的每月第 N 日声明值，仅信用卡；`None` = 未设置）。"]
     pub due_day: Option<i64>,
 }
 
@@ -98,21 +103,28 @@ pub struct AccountInput {
     pub kind: AccountType,
     pub currency_code: String,
     pub initial_balance_cents: Option<i64>,
+    #[doc = "信用卡档案字段（仅 `credit` 账户；缺省/`null` = 未设置，三个字段彼此独立）。"]
     pub credit_limit_cents: Option<i64>,
     pub statement_day: Option<i64>,
     pub due_day: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[schema(
+    description = "账户编辑入参（IPC `update_account` / HTTP `PUT /api/v1/accounts/{id}`）。`type` 不可改：账户类型参与 kind→符号矩阵（余额方向），改动会重写历史交易的余额归属（ADR-0026 同期决策，Q3）；`initial_balance_cents` 不在此改，归余额调整（见参考数据与设置域 BalanceAdjustment）。"
+)]
 pub struct AccountUpdateInput {
     pub name: Option<String>,
+    #[doc = "仅无交易账户可改（有交易时改币种会使历史折算口径错乱，后端拒绝）。"]
     pub currency_code: Option<String>,
+    #[doc = "信用卡档案字段三态：键缺席 = 不改、`null` = 清空、给值 = 落定该值（区分器 [`ledger_infra::serde_util::double_option`]：serde 默认把「键缺席」与「值为 `null`」折叠成同一 `None`，原理与用法见其模块文档）。"]
     #[serde(default, deserialize_with = "ledger_infra::serde_util::double_option")]
     pub credit_limit_cents: Option<Option<i64>>,
     #[serde(default, deserialize_with = "ledger_infra::serde_util::double_option")]
     pub statement_day: Option<Option<i64>>,
     #[serde(default, deserialize_with = "ledger_infra::serde_util::double_option")]
     pub due_day: Option<Option<i64>>,
+    #[doc = "可选归档键：缺席 = 不改，`true` / `false` = 落定归档 / 恢复（布尔无「清空」态，`null` 同缺席）。"]
     #[serde(default)]
     pub is_archived: Option<bool>,
 }
