@@ -30,7 +30,8 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 | 12 | 测试基础设施 | [`docs/contexts/CONTEXT-testing.md`](docs/contexts/CONTEXT-testing.md) | invoke 测试接缝、defaults 表、overrides 表、未命中报错、参考数据预热、清理四件套、消息替身稳定实例、目录级测试薄壳、行为等价判据（ADR-0085）；测试世界、步骤输入工厂、步骤动词、快照分组、公开写入口（测试侧）（ADR-0086）；测试三层与权威层、壳三件套、接线证明、错误码契约代表（ADR-0087）；断言强度、双断言、矩阵、存在性断言、组件测试数据工厂；零击杀测试、存活变异体、等价变异体（ADR-0137）；替身后端、浏览器开发模式（ADR-0143）；计数型渲染守门（#2012）；注释禁令四分类（ADR-0145）：同义复述（Tautology）、豁口辩护（Excuse）、失准（Stale）、决策记录（Decision Record） |
 | 13 | 多端同步 | [`docs/contexts/CONTEXT-sync.md`](docs/contexts/CONTEXT-sync.md) | Sync、Transport、OpLog、DomainCommand、Replay、DeviceId、TotalOrder、OccurrenceKey、ParkedOp、Checkpoint、SyncEnvelope、SyncBoundary（ADR-0091）、SyncDatabase（ADR-0139） |
 | 14 | 应用更新 | [`docs/contexts/CONTEXT-app-update.md`](docs/contexts/CONTEXT-app-update.md) | 自动更新（Auto Update）、更新检查、更新清单、更新工件、更新签名（ADR-0124） |
-| 15 | 储蓄目标 | [`docs/contexts/CONTEXT-savings-goal.md`](docs/contexts/CONTEXT-savings-goal.md) | 储蓄目标（SavingsGoal）、目标账户、蓄水进度、预计达成时间（ETA）、所需月存、达成与归档、养老测算 |
+| 15 | 储蓄目标 | [`docs/contexts/CONTEXT-savings-goal.md`](docs/contexts/CONTEXT-savings-goal.md) | 储蓄目标（SavingsGoal）、目标账户、蓄水进度、预计达成时间（ETA）、所需月存、达成与归档 |
+| 16 | 养老规划 | [`docs/contexts/CONTEXT-pension.md`](docs/contexts/CONTEXT-pension.md) | 养老档案（PensionProfile）、养老估算（PensionEstimate）、基本养老金（BasicPension）、个人养老储蓄（PersonalPensionSavings）、退休替代率（ReplacementRate）、养老缺口（PensionGap） |
 
 ## 域间关系
 
@@ -51,4 +52,5 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 - **多端同步 → 经写入接缝重放各域语义命令**：同步域不定义业务语义，op 载荷就是各域既有写入命令，重放是行为编排之外的第 N 写入入口（ADR-0091）；与备份域相邻——SyncEnvelope 复用加密模式 / 主口令，但备份 ≠ 同步（快照还原 vs 增量合并）。期次去重与同步边界细节见同步域词条。
 - **实物资产（单列小域）→ 核心交易（只消费不产流水）**：PhysicalAsset 是大件实物的估值档案，与物品域 Item 按「要不要跟踪市值」互斥分家；金额折算走核心域 Amount 接缝、币种复用核心域字典。估值机制、净资产口径与 MVP 边界见实物资产域词条（ADR-0064）。
 - **应用更新（单列小域）→ 壳层机制，与备份域相邻**：自动更新不持账本语义，后端与前端面归壳层（不立业务域 crate 与壳内域目录，ADR-0111 归位判据；决策集合见 ADR-0124）；安装前经备份域更新前备份，自动检查开关与提醒记忆是设备偏好（见参考设置域轻量设置项），提醒弹层消费界面域弹层编排；与多端同步域无交叉——更新分发应用本体，不分发账本数据。
-- **储蓄目标（单列小域）→ 核心交易 + 定时计划**：蓄水与取出是真实 `transfer` / `expense` 流水，进度即专属账户余额（ADR-0133）；月存节奏复用定时转账（ScheduledTransfer）形态，目标域零新写入路径；与预算互不扣减——预算管花、目标管攒；账户身份由绑定派生、不复用账户类型闭集（黑洞先例）。
+- **储蓄目标（单列小域）→ 核心交易 + 定时计划**：蓄水与取出是真实 `transfer` / `expense` 流水，进度即专属账户余额（ADR-0133）；月存节奏复用定时转账（ScheduledTransfer）形态，目标域零新写入路径；与预算互不扣减——预算管花、目标管攒；账户身份由绑定派生、不复用账户类型闭集（黑洞先例）。原二期「养老测算」已随 ADR-0146 迁出为独立养老规划域。
+- **养老规划（单列小域）→ 核心交易 + 参考数据与设置 + 投资域 + 预算 + 储蓄目标（只读消费、零反向依赖）**：单账本单人单例配置（`pension_profile`），覆盖城镇职工基本养老与个人养老储蓄两腿（ADR-0146）；基本养老金纯手工、绝不进净资产；个人养老储蓄以三互斥模式防重算，可多选只读引用任意币种账本账户（投资账户取现金与持仓市值）、储蓄目标（余额与关联月存节奏）或全账可投资资产，统一按参考设置域当期汇率折算 CNY；目标退休月开支可单次参考预算域年度预算总额折月；存在缺口时单向引导跳转储蓄目标新建，自身不写任何他域数据；显式保存入多端同步 OpLog。
