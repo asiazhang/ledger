@@ -48,7 +48,7 @@ fn init_db_is_idempotent_and_seeds_defaults() {
     assert_eq!(mismatched, 0);
 }
 
-const LATEST_SCHEMA_VERSION: usize = 37;
+use crate::db::migrate::MIGRATION_COUNT as LATEST_SCHEMA_VERSION;
 
 #[test]
 fn guard_schema_ahead_rejects_db_newer_than_chain() {

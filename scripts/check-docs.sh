@@ -147,30 +147,9 @@ if [ -f "$adr_readme" ]; then
   done
 fi
 
-model_readme=docs/model/README.md
-mig_dir=src-tauri/migrations
-if [ ! -f "$model_readme" ]; then
-  err "Migration 索引：$model_readme 不存在"
-elif [ ! -d "$mig_dir" ]; then
-  err "Migration 索引：迁移目录 $mig_dir 不存在"
-else
-  for f in "$mig_dir"/V[0-9][0-9][0-9]__*.sql; do
-    [ -e "$f" ] || continue
-    mig_name=$(basename "$f")
-    mig_name_re=$(printf '%s' "$mig_name" | sed 's/\./\\./g')
-    grep -qE "^\| \`$mig_name_re\`" "$model_readme" || \
-      err "Migration 未入索引：$mig_name 在 $model_readme 的 Migration 索引无表行（迁移落盘须同步补索引行）"
-  done
-  idx_names=$(grep -oE '^\| `V[0-9]{3}__[A-Za-z0-9_-]+\.sql`' "$model_readme" | sed 's/^| `//; s/`$//' | sort -u || true)
-  for mig_name in $idx_names; do
-    [ -f "$mig_dir/$mig_name" ] || \
-      err "Migration 索引反查：$model_readme 索引表行 $mig_name 无对应迁移文件（迁移删除 / 改名须同步索引）"
-  done
-fi
-
 if [ -s "$tmp" ]; then
   cat "$tmp"
   echo "❌ 文档一致性检查失败：$(wc -l <"$tmp" | tr -d ' ') 处问题（见上方 ✗ 列表）"
   exit 1
 fi
-echo "  ✓ 地图完整、术语唯一、导航一致、ADR 编号唯一、词汇表与模型文档坐标清零、快照分组组数一致、ADR 索引完整且可反查、Migration 索引双向全等"
+echo "  ✓ 地图完整、术语唯一、导航一致、ADR 编号唯一、词汇表与模型文档坐标清零、快照分组组数一致、ADR 索引完整且可反查"

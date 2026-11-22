@@ -146,7 +146,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
   },
   {
     name: "文档一致性检查（check-docs.sh）",
-    refs: "issue #166 起（九项校验逐票增补）",
+    refs: "issue #166 起（八项校验逐票增补；⑨ Migration 索引门随 #2199 退役）",
     hosts: [
       {
         file: CHECK_SH_FILE,

@@ -78,5 +78,5 @@ Rust 根（`src-tauri/`）是 workspace：根包仍是 tauri 应用包（壳层�
 ## 完成标准
 
 1. 受影响域、入口与分层已识别，改动落在正确接缝；适用测试、文案/错误翻译与文档同步已完成。
-2. 代码或脚本改动已运行 `./scripts/check.sh`；仅文档改动已运行 `./scripts/check-docs.sh`。
+2. 代码或脚本改动已运行 `./scripts/check.sh`（只含静态门，不含 cargo test）；Rust 侧代码改动另须运行 `./scripts/test.sh`；仅文档改动已运行 `./scripts/check-docs.sh`。
 3. 未解决的 ADR 冲突、无法运行的检查或未提交的改动已明确报告。

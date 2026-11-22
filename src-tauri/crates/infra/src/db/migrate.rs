@@ -8,109 +8,12 @@ use crate::error::{AppError, Result};
 
 pub const BOOT_SCHEMA_AHEAD: &str = "boot.schema-ahead";
 
+include!(concat!(env!("OUT_DIR"), "/migration_chain.rs"));
+
 pub fn migrations() -> &'static Migrations<'static> {
     static MIGRATIONS: OnceLock<Migrations<'static>> = OnceLock::new();
-    MIGRATIONS.get_or_init(|| {
-        Migrations::new(vec![
-            M::up(include_str!("../../../../migrations/V001__initial.sql")),
-            M::up(include_str!("../../../../migrations/V002__investment.sql")),
-            M::up(include_str!(
-                "../../../../migrations/V003__scheduled_transactions.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V004__seed_defaults.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V006__transaction_amount_index.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V007__transaction_idempotency_key.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V008__app_settings.sql"
-            )),
-            M::up(include_str!("../../../../migrations/V009__items.sql")),
-            M::up(include_str!(
-                "../../../../migrations/V010__price_history.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V011__instruments_source.sql"
-            )),
-            M::up(include_str!("../../../../migrations/V012__policies.sql")),
-            M::up(include_str!(
-                "../../../../migrations/V013__transaction_policy_id.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V014__subscription_plan_policy_id.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V015__physical_assets.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V016__transaction_structural_indexes.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V017__balance_net_worth_cache.sql"
-            )),
-            M::up(include_str!("../../../../migrations/V018__note_pinyin.sql")),
-            M::up(include_str!(
-                "../../../../migrations/V019__insurer_dictionary.sql"
-            )),
-            M::up(include_str!("../../../../migrations/V020__sync_oplog.sql")),
-            M::up(include_str!(
-                "../../../../migrations/V021__sync_merge_semantics.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V022__sync_checkpoint.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V023__transaction_funding_account.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V024__security_lot_adjustments.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V025__transaction_index_cleanup.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V026__account_credit_terms.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V027__security_transaction_origin.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V028__instrument_constant_unit_price.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V029__transaction_fx_rate_trace.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V030__transaction_merchant_covering_index.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V031__drop_note_pinyin.sql"
-            )),
-            M::up(include_str!("../../../../migrations/V032__goals.sql")),
-            M::up(include_str!(
-                "../../../../migrations/V033__security_transaction_to_instrument_index.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V034__transaction_fundings.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V035__transaction_source_order_no.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V036__sync_db_split.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V037__account_archive.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V038__transaction_kind_count_index.sql"
-            )),
-        ])
-    })
+    MIGRATIONS
+        .get_or_init(|| Migrations::new(MIGRATION_CHAIN.iter().map(|sql| M::up(sql)).collect()))
 }
 
 pub fn guard_schema_ahead(conn: &Connection) -> Result<()> {
