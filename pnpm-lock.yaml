@@ -106,7 +106,6 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@stryker-mutator/vitest-runner@10.0.0': 75df2fbc3ae74bfb14e12da70b10407914cd308c02665bd6d809c632e5cc30db
   naive-ui: 1d273c9e8f7755836be7d55daae02418e67717cd9ee9f835fe703fbaae0ef403
 
 importers:
@@ -221,7 +220,7 @@ importers:
         version: 10.0.0(@stryker-mutator/core@10.0.0(@types/node@22.20.5))(typescript@6.0.3)
       '@stryker-mutator/vitest-runner':
         specifier: 10.0.0
-        version: 10.0.0(patch_hash=75df2fbc3ae74bfb14e12da70b10407914cd308c02665bd6d809c632e5cc30db)(@stryker-mutator/core@10.0.0(@types/node@22.20.5))(vitest@5.1.1(@types/node@22.20.5)(jsdom@30.1.3)(vite@8.3.8(@types/node@22.20.5)(esbuild@0.28.2)))
+        version: 10.0.0(@stryker-mutator/core@10.0.0(@types/node@22.20.5))(vitest@5.1.1(@types/node@22.20.5)(jsdom@30.1.3)(vite@8.3.8(@types/node@22.20.5)(esbuild@0.28.2)))
       '@tauri-apps/cli':
         specifier: ^2.12.6
         version: 2.12.6
@@ -4058,7 +4057,7 @@ snapshots:
 
   '@stryker-mutator/util@10.0.0': {}
 
-  '@stryker-mutator/vitest-runner@10.0.0(patch_hash=75df2fbc3ae74bfb14e12da70b10407914cd308c02665bd6d809c632e5cc30db)(@stryker-mutator/core@10.0.0(@types/node@22.20.5))(vitest@5.1.1(@types/node@22.20.5)(jsdom@30.1.3)(vite@8.3.8(@types/node@22.20.5)(esbuild@0.28.2)))':
+  '@stryker-mutator/vitest-runner@10.0.0(@stryker-mutator/core@10.0.0(@types/node@22.20.5))(vitest@5.1.1(@types/node@22.20.5)(jsdom@30.1.3)(vite@8.3.8(@types/node@22.20.5)(esbuild@0.28.2)))':
     dependencies:
       '@stryker-mutator/api': 10.0.0
       '@stryker-mutator/core': 10.0.0(@types/node@22.20.5)
