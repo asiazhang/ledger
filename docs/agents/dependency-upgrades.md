@@ -35,6 +35,7 @@
 ### 现役 hold 台账
 
 - **typescript 刻意留在 6.x**：typescript@7.0.2 是 Go 端口，exports map 不再暴露 `./lib/tsc` 与 `./lib/typescript.js`，vue-tsc@3.3.11 直接硬崩溃（ERR_PACKAGE_PATH_NOT_EXPORTED，非静默跳过），build 类型检查不可用。上游 vuejs/language-tools #5381（TypeScript 7/tsgo 支持追踪，已关闭）与 #6156 均指向 typescript-native-bridge，维护者明确需等 TypeScript 7.1 的官方插件接口。解除条件：待 vue-tsc 支持后升级。
+- **jsdom 刻意留在 30.x**（2026-11-22 体检，#2223）：31.0.0 换用新 CSS 引擎（PR jsdom/jsdom#4417，已随 v31.0.0 发布，上游无 dedicated 分歧 issue）后，inline style（specified value）序列化偏离真实浏览器——按 css-values-4 的 computed-value 排序算法重排（该算法的 web 不兼容性由 csswg-drafts#1731 记录，浏览器对 style 声明保留 authored 项顺序）。实测失败模式（vitest + jsdom environment）：`style.width` 写入 `calc(100vw - 32px)` 读回 `calc(-32px + 100vw)`；`gridTemplateColumns` 写入 `repeat(3, minmax(0, 1fr))` 读回 `repeat(3, minmax(0px, 1fr))`；百分比 `45.454545455%` 被截短为 `45.4545`——前端 10 用例因此变红（AppModal 全屏化族、HoldingsOverview 栅格、InvestmentOverviewPanel 比例条、PlanDetailModal、CategoryForm）。本仓测试按浏览器行为断言，向 jsdom 31 序列化适配会把非浏览器行为固化进测试，故 hold。解除条件：上游使 inline style 序列化回到与真实浏览器一致后重评升级；届时可并行评估测试改写为序列化不敏感断言的方案。
 
 ## 工具链与 CI 固定值
 
