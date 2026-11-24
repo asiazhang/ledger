@@ -291,20 +291,14 @@ defineExpose({ save });
           data-testid="policy-stats-summary"
           style="display: flex; gap: 16px; font-size: 13px"
         >
-          <span
-            >{{ t("policies.stats.paid") }}：<strong>{{ paidText }}</strong></span
-          >
-          <span
-            >{{ t("policies.stats.inflow") }}：<strong>{{ inflowText }}</strong></span
-          >
+          <span>{{ t("policies.stats.paid") }}：<strong>{{ paidText }}</strong></span>
+          <span>{{ t("policies.stats.inflow") }}：<strong>{{ inflowText }}</strong></span>
           <span>
             {{ t("policies.stats.nextCharge") }}：<strong>{{
               statsSummary?.next_charge_date ?? "—"
             }}</strong>
           </span>
-          <span
-            >{{ t("policies.stats.expiry") }}：<strong>{{ expiryText }}</strong></span
-          >
+          <span>{{ t("policies.stats.expiry") }}：<strong>{{ expiryText }}</strong></span>
         </div>
         <NFormItem
           v-if="editing"

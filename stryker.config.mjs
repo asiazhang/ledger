@@ -1,11 +1,11 @@
 // 前端变异测试配置（spec #1816 / ADR-0137 决策 3 / 接入票 #1832）。
 // 本地按需运行（原每日 mutation-bench.yml workflow 已撤下，ADR-0137 修订注记
 // 2026-10-14），不进 check.sh、不进 PR 门禁。
-// 报告可信前提：vitest-runner@10.0.0 未适配 Vitest 5 会全量误报 Survived，
-// 由 pnpm patchedDependencies 套用上游修复 PR stryker-js#6214（见 pnpm-workspace.yaml
-// 与 patches/@stryker-mutator__vitest-runner@10.0.0.patch 头注），并以
-// killer 变异金丝雀验收兜底（已知必杀变异报 Survived 即 runner 失效，#6073
-// 残留误报探针；金丝雀命令留档 ADR-0137 载体撤下修订注记）。
+// 报告可信前提（历史）：vitest-runner@10.1.1 起上游原生适配 Vitest 5 用例链分隔符
+// （stryker-mutator/stryker-js#6214，随 10.1.1 发布），此前空格拼接导致全量误报
+// Survived 的本地补丁已随上游发布退役（#2223）；并以 killer 变异金丝雀验收兜底
+// （已知必杀变异报 Survived 即 runner 失效，#6073 残留误报探针；金丝雀步骤留档
+// ADR-0137）。
 // 普通对象导出（defineConfig 从 @stryker-mutator/api/core 导入会依赖传递依赖
 // 暴露面，pnpm 严格布局下不可达）。
 export default {
