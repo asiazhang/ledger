@@ -26,7 +26,7 @@
 ### 3. 前端侧 Stryker：补丁适配 Vitest 5 + 金丝雀兜底（#1832）
 
 - 覆盖 `src/**/*.ts`（不含 `.vue`），`stryker.config.mjs` 设 `dryRunTimeout: 900_000`（默认 300s 会在全量套件干跑时超时）。
-- **Vitest 5 适配补丁**：`vitest-runner@10.0.0` 按空格拼用例名，而 Vitest 5 改为 `' > '` 分隔符导致 covered mutants 100% 误报 Survived；通过 `pnpm patchedDependencies` 套用上游修复（绑定精确版本 10.0.0），待上游正式发布适配版本后移除补丁。
+- **Vitest 5 适配补丁**：`vitest-runner@10.0.0` 按空格拼用例名，而 Vitest 5 改为 `' > '` 分隔符导致 covered mutants 100% 误报 Survived；通过 `pnpm patchedDependencies` 套用上游修复（绑定精确版本 10.0.0），待上游正式发布适配版本后移除补丁。（修订注记 2026-11-22，#2223：退出条件达成——上游修复 PR stryker-mutator/stryker-js#6214 已随 vitest-runner@10.1.1 发布，本地补丁与登记已移除。）
 - **金丝雀验收**：升级 `vitest-runner` 或 `Vitest` 前必跑 `src/stores/sidebar-order.ts` 单文件独立无缓存变异（`isArrangeableView` 必 Killed），防止误报静默复发；依赖升级纪律见 `docs/agents/dependency-upgrades.md`。
 
 ### 4. 观测期不设强阈值；判定口径三分类
@@ -51,5 +51,5 @@ Rust 侧变异豁免统一收口在 workspace 根 `src-tauri/.cargo/mutants.toml
 ## 后果
 
 - 测试有效性获得可执行、可复现的本地量化手段，但缺少 CI 定时提醒的覆盖缺口需由本地开发与重构纪律承接。
-- 补丁绑定 `vitest-runner@10.0.0`，升级测试栈时必须按金丝雀步骤核验报告可信度。
+- 上游 `vitest-runner@10.1.1` 起原生适配 Vitest 5，补丁已按退出条件移除（#2223）；升级 `vitest-runner` 或 `Vitest` 前仍必跑金丝雀步骤核验报告可信度。
 - 词汇表保留「零击杀测试」「存活变异体」「等价变异体」三术语。

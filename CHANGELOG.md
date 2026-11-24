@@ -2,6 +2,12 @@
 
 本文件记录开源记账（OpenLedger）各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [Unreleased]
+
+### Changed
+
+- **依赖**：例行升级——前端锁刷新落范围内最新（vue/vite/vue-router/vitest/naive-ui 系桌面与移动端共用依赖）并 manifest 写实；oxfmt 0.68→0.79（.vue 格式引擎换 oxc 原生，一处存量排版收编）；Stryker 三件套 10.0.0→10.1.1 并移除 Vitest 5 分隔符本地补丁（上游已原生支持）；bun-types 对齐 CI 固定 bun 1.4.4；后端 Cargo.lock 109 包范围内刷新；jsdom 刻意留在 30.x（31 的 inline style 序列化偏离真实浏览器，hold 台账登记）([#2223])。
+
 ## [0.11.2] - 2026-11-01
 
 ### Added
@@ -562,3 +568,4 @@
 [#1982]: https://github.com/asiazhang/ledger/issues/1982
 [#1999]: https://github.com/asiazhang/ledger/issues/1999
 [#2004]: https://github.com/asiazhang/ledger/issues/2004
+[#2223]: https://github.com/asiazhang/ledger/issues/2223
